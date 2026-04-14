@@ -1,0 +1,647 @@
+version: "3.9"
+
+# ════════════════════════════════════════════════════════════
+#  Smart Tool Log Parser — Docker Compose (Final)
+#
+#  ONE codebase, ONE Dockerfile, MULTIPLE entry points.
+#  Each app-* container runs the same image with a different
+#  command, acting as a separate module of the monolith.
+#
+#  Flow:
+#    Upload → MinIO → Redis dedup → Detect → Extract
+#    → AI Normalize → Confidence check
+#      < 0.85  → DynamoDB human-review-queue (skip Kafka)
+#      >= 0.85 → Urgency Classifier → Kafka topic
+#                  logs.p0 → app-consumer-hot (WebSocket + DB)
+#                  logs.p1 → app-consumer-hot (WebSocket + DB)
+#                  logs.p2 → app-consumer-cold (batch DB)
+#                  logs.deadletter → app-consumer-deadletter
+#
+#  Infrastructure:  Zookeeper · Kafka · TimescaleDB
+#                   DynamoDB · Redis · MinIO
+#  App containers:  pipeline · consumer-hot · consumer-cold
+#                   consumer-deadletter · query
+# ════════════════════════════════════════════════════════════
+
+services:
+  # ══════════════════════════════════════════
+  # INFRASTRUCTURE
+  # ══════════════════════════════════════════
+
+  # ─────────────────────────────────────────
+  # ZOOKEEPER
+  # Required by Kafka for broker coordination.
+  # Not used directly by application code.
+  # ─────────────────────────────────────────
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - logparser-net
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo ruok | nc localhost 2181 | grep imok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────
+  # KAFKA BROKER
+  # Receives events from app-pipeline after
+  # urgency classification. Four topics:
+  #   logs.p0         — critical (fire/safety)
+  #   logs.p1         — standard errors
+  #   logs.p2         — batch / non-urgent
+  #   logs.deadletter — parse failures + P3
+  #
+  # Internal (container): kafka:29092
+  # External (host):      localhost:9092
+  # ─────────────────────────────────────────
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_RETENTION_HOURS: 168
+    networks:
+      - logparser-net
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "kafka-broker-api-versions",
+          "--bootstrap-server",
+          "localhost:9092",
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────
+  # KAFKA TOPIC INIT (one-shot, exits after)
+  # Creates all four topics on first run.
+  # ─────────────────────────────────────────
+  kafka-init:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - logparser-net
+    entrypoint: ["/bin/bash", "-c"]
+    command: |
+      "
+      echo '>>> Creating Kafka topics...'
+
+      kafka-topics --create --if-not-exists \
+        --bootstrap-server kafka:29092 \
+        --partitions 3 --replication-factor 1 \
+        --topic logs.p0 \
+        --config retention.ms=604800000
+
+      kafka-topics --create --if-not-exists \
+        --bootstrap-server kafka:29092 \
+        --partitions 3 --replication-factor 1 \
+        --topic logs.p1 \
+        --config retention.ms=604800000
+
+      kafka-topics --create --if-not-exists \
+        --bootstrap-server kafka:29092 \
+        --partitions 3 --replication-factor 1 \
+        --topic logs.p2 \
+        --config retention.ms=604800000
+
+      kafka-topics --create --if-not-exists \
+        --bootstrap-server kafka:29092 \
+        --partitions 1 --replication-factor 1 \
+        --topic logs.deadletter \
+        --config retention.ms=2592000000
+
+      echo '>>> Topics created:'
+      kafka-topics --list --bootstrap-server kafka:29092
+      "
+
+  # ─────────────────────────────────────────
+  # KAFKA UI
+  # Visual dashboard for inspecting topics,
+  # consumer group lag, and message payloads.
+  # Access: http://localhost:8090
+  # ─────────────────────────────────────────
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8090:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    networks:
+      - logparser-net
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────
+  # TIMESCALEDB
+  # Time-series PostgreSQL. Stores all
+  # normalized log events from hot (P0/P1)
+  # and cold (P2) consumers.
+  # NL2SQL queries run against this.
+  # Host port: 5432
+  # ─────────────────────────────────────────
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: timescaledb
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: logparser
+      POSTGRES_PASSWORD: logparser_secret
+      POSTGRES_DB: logparser_db
+    volumes:
+      - timescale-data:/var/lib/postgresql/data
+      - ./init/timescale:/docker-entrypoint-initdb.d:ro
+    networks:
+      - logparser-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U logparser -d logparser_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────
+  # DYNAMODB LOCAL
+  # Two tables:
+  #   normalization-rules   — vendor field mappings
+  #                           updated when humans correct events
+  #   human-review-queue    — events with confidence <= 0.85
+  #                           engineers review these on demand
+  # Host port: 8000
+  # ─────────────────────────────────────────
+  dynamodb-local:
+    image: amazon/dynamodb-local:latest
+    container_name: dynamodb-local
+    ports:
+      - "8000:8000"
+    command:
+      [
+        "-jar",
+        "DynamoDBLocal.jar",
+        "-sharedDb",
+        "-dbPath",
+        "/home/dynamodblocal/data",
+      ]
+    volumes:
+      - dynamodb-data:/home/dynamodblocal/data
+    networks:
+      - logparser-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────
+  # DYNAMODB INIT (one-shot, exits after)
+  # ─────────────────────────────────────────
+  dynamodb-init:
+    image: amazon/aws-cli:latest
+    container_name: dynamodb-init
+    depends_on:
+      dynamodb-local:
+        condition: service_healthy
+    networks:
+      - logparser-net
+    environment:
+      AWS_ACCESS_KEY_ID: dummy
+      AWS_SECRET_ACCESS_KEY: dummy
+      AWS_DEFAULT_REGION: ap-southeast-1
+    entrypoint: ["/bin/bash", "-c"]
+    command: |
+      "
+      echo '>>> Creating normalization-rules table...'
+      aws dynamodb create-table \
+        --table-name normalization-rules \
+        --attribute-definitions \
+          AttributeName=vendorId,AttributeType=S \
+          AttributeName=fieldName,AttributeType=S \
+        --key-schema \
+          AttributeName=vendorId,KeyType=HASH \
+          AttributeName=fieldName,KeyType=RANGE \
+        --billing-mode PAY_PER_REQUEST \
+        --endpoint-url http://dynamodb-local:8000
+
+      echo '>>> Creating human-review-queue table...'
+      aws dynamodb create-table \
+        --table-name human-review-queue \
+        --attribute-definitions \
+          AttributeName=jobId,AttributeType=S \
+          AttributeName=createdAt,AttributeType=S \
+        --key-schema \
+          AttributeName=jobId,KeyType=HASH \
+          AttributeName=createdAt,KeyType=RANGE \
+        --billing-mode PAY_PER_REQUEST \
+        --endpoint-url http://dynamodb-local:8000
+
+      echo '>>> DynamoDB tables ready.'
+      aws dynamodb list-tables --endpoint-url http://dynamodb-local:8000
+      "
+
+  # ─────────────────────────────────────────
+  # REDIS
+  # Deduplication only.
+  # On file arrival, pipeline hashes the file
+  # content and checks Redis. If key exists,
+  # file is skipped. If not, key is stored
+  # and processing continues.
+  # Host port: 6379
+  # ─────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - logparser-net
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────
+  # MINIO (S3-compatible object store)
+  # Every raw log file is stored here
+  # immediately on arrival, before any
+  # processing. Acts as the fallback/audit
+  # copy if processing fails.
+  # API:     http://localhost:9000
+  # Console: http://localhost:9001
+  # Creds:   minioadmin / minioadmin123
+  # ─────────────────────────────────────────
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    volumes:
+      - minio-data:/data
+    networks:
+      - logparser-net
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────
+  # MINIO INIT (one-shot, exits after)
+  # ─────────────────────────────────────────
+  minio-init:
+    image: minio/mc:latest
+    container_name: minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - logparser-net
+    entrypoint: ["/bin/bash", "-c"]
+    command: |
+      "
+      echo '>>> Creating MinIO buckets...'
+      mc alias set local http://minio:9000 minioadmin minioadmin123
+      mc mb --ignore-existing local/raw-logs
+      mc mb --ignore-existing local/processed-logs
+      echo '>>> Buckets ready.'
+      mc ls local
+      "
+
+  # ══════════════════════════════════════════
+  # APP CONTAINERS
+  # All built from ONE Dockerfile at repo root.
+  # Each runs a different module entry point
+  # via the `command` override.
+  # ══════════════════════════════════════════
+
+  # ─────────────────────────────────────────
+  # APP — PIPELINE
+  # The ingestion and processing brain.
+  # Responsibilities:
+  #   1. Receive log file via POST /logs/upload
+  #   2. Store raw file to MinIO
+  #   3. Check Redis for duplicate (skip if found)
+  #   4. Detect file format (JSON/XML/CSV/syslog/text/binary)
+  #   5. Extract fields into structured key-value pairs
+  #   6. AI normalization via Anthropic API
+  #      + DynamoDB rules lookup for vendor mappings
+  #   7. Assign confidence score
+  #      < 0.85  → write to DynamoDB human-review-queue, stop
+  #      >= 0.85 → continue to urgency classifier
+  #   8. Urgency classifier assigns P0/P1/P2/deadletter
+  #   9. Produce event to matching Kafka topic
+  #
+  # REST API: http://localhost:8080
+  # Swagger:  http://localhost:8080/docs
+  # Also exposes: GET /jobs/{id}, GET /queue, POST /queue/{id}/review
+  # ─────────────────────────────────────────
+  app-pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: app-pipeline
+    command: python -m app.pipeline.main
+    ports:
+      - "8080:8080"
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://logparser:logparser_secret@timescaledb:5432/logparser_db
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      REDIS_URL: redis://redis:6379
+      DYNAMODB_ENDPOINT: http://dynamodb-local:8000
+      DYNAMODB_TABLE_RULES: normalization-rules
+      DYNAMODB_TABLE_REVIEW: human-review-queue
+      AWS_ACCESS_KEY_ID: dummy
+      AWS_SECRET_ACCESS_KEY: dummy
+      AWS_DEFAULT_REGION: ap-southeast-1
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin123
+      S3_BUCKET_RAW: raw-logs
+      S3_BUCKET_PROCESSED: processed-logs
+      NORMALIZE_CONFIDENCE_THRESHOLD: "0.85"
+      APP_ENV: development
+      LOG_LEVEL: debug
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      dynamodb-local:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - logparser-net
+    volumes:
+      - .:/app
+      - ./synthetic-logs:/app/synthetic-logs:ro
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────
+  # APP — CONSUMER HOT
+  # Listens to Kafka topics: logs.p0, logs.p1
+  # Responsibilities:
+  #   1. Consume P0 and P1 events from Kafka
+  #   2. Write event immediately to TimescaleDB
+  #   3. Push real-time alert to frontend
+  #      via WebSocket (ws://localhost:8083/ws/alerts)
+  #
+  # P0 = Critical (e.g. fire alarm, vacuum fault)
+  # P1 = Standard machine errors
+  # Target latency: < 500ms end-to-end
+  #
+  # WebSocket: ws://localhost:8083/ws/alerts
+  # ─────────────────────────────────────────
+  app-consumer-hot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: app-consumer-hot
+    command: python -m app.consumers.hot
+    ports:
+      - "8083:8083"
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://logparser:logparser_secret@timescaledb:5432/logparser_db
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_TOPICS_HOT: logs.p0,logs.p1
+      KAFKA_GROUP_ID_HOT: consumer-group-hot
+      APP_ENV: development
+      LOG_LEVEL: debug
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - logparser-net
+    volumes:
+      - .:/app
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────
+  # APP — CONSUMER COLD
+  # Listens to Kafka topic: logs.p2
+  # Responsibilities:
+  #   1. Consume P2 events from Kafka
+  #   2. Buffer events into batches (100 records
+  #      or every 5 minutes, whichever comes first)
+  #   3. Bulk insert batches into TimescaleDB
+  #
+  # P2 = Non-urgent, informational logs
+  # Optimised for throughput, not latency
+  # ─────────────────────────────────────────
+  app-consumer-cold:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: app-consumer-cold
+    command: python -m app.consumers.cold
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://logparser:logparser_secret@timescaledb:5432/logparser_db
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_TOPIC_COLD: logs.p2
+      KAFKA_GROUP_ID_COLD: consumer-group-cold
+      COLD_BATCH_SIZE: "100"
+      COLD_BATCH_INTERVAL_SECONDS: "300"
+      APP_ENV: development
+      LOG_LEVEL: debug
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - logparser-net
+    volumes:
+      - .:/app
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────
+  # APP — CONSUMER DEADLETTER
+  # Listens to Kafka topic: logs.deadletter
+  # Responsibilities:
+  #   1. Consume all failed/unparseable events
+  #      (covers both P3 low-priority and any
+  #      file that failed parsing entirely)
+  #   2. Log the failure with full context
+  #   3. Write a minimal failure record to
+  #      TimescaleDB for audit trail
+  #   4. Alert if deadletter volume spikes
+  #      (indicates a new log format we can't parse)
+  # ─────────────────────────────────────────
+  app-consumer-deadletter:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: app-consumer-deadletter
+    command: python -m app.consumers.deadletter
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://logparser:logparser_secret@timescaledb:5432/logparser_db
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_TOPIC_DEADLETTER: logs.deadletter
+      KAFKA_GROUP_ID_DEADLETTER: consumer-group-deadletter
+      APP_ENV: development
+      LOG_LEVEL: debug
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - logparser-net
+    volumes:
+      - .:/app
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────
+  # APP — QUERY (NL2SQL)
+  # Dedicated service for frontend queries.
+  # Responsibilities:
+  #   1. Accept natural language query from frontend
+  #      via POST /query
+  #   2. Use Anthropic API to translate NL → SQL
+  #      (schema-aware: knows TimescaleDB table structure)
+  #   3. Execute SQL against TimescaleDB
+  #      (uses continuous aggregates for fast rollups)
+  #   4. Return structured result for chart rendering
+  #
+  # Kept separate so frontend team has a clean,
+  # dedicated endpoint that can be updated without
+  # touching the pipeline.
+  #
+  # REST API: http://localhost:8081
+  # Swagger:  http://localhost:8081/docs
+  # ─────────────────────────────────────────
+  app-query:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: app-query
+    command: python -m app.query.main
+    ports:
+      - "8081:8081"
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://logparser:logparser_secret@timescaledb:5432/logparser_db
+      APP_ENV: development
+      LOG_LEVEL: debug
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    networks:
+      - logparser-net
+    volumes:
+      - .:/app
+    restart: unless-stopped
+
+# ─────────────────────────────────────────
+# FRONTEND (placeholder — not yet implemented)
+#
+# Whoever builds the frontend should:
+#   1. Create a Dockerfile inside frontend/
+#   2. Uncomment this block
+#   3. Replace the image/build and port as needed
+#   4. Set the three env vars below to point to
+#      the correct backend service URLs
+#
+# The frontend communicates with THREE backend services:
+#
+#   REST (log upload, job status, review queue):
+#     http://localhost:8080  →  app-pipeline
+#
+#   REST (natural language queries + chart data):
+#     http://localhost:8081  →  app-query
+#
+#   WebSocket (real-time P0/P1 alerts):
+#     ws://localhost:8083/ws/alerts  →  app-consumer-hot
+#
+# See frontend/README.md for full integration details.
+# ─────────────────────────────────────────
+#
+#  frontend:
+#    build:
+#      context: ./frontend
+#      dockerfile: Dockerfile
+#    container_name: frontend
+#    ports:
+#      - "3000:3000"
+#    environment:
+#      PIPELINE_API_URL: http://localhost:8080
+#      QUERY_API_URL: http://localhost:8081
+#      WS_ALERTS_URL: ws://localhost:8083/ws/alerts
+#    networks:
+#      - logparser-net
+#    depends_on:
+#      - app-pipeline
+#      - app-query
+#      - app-consumer-hot
+#    restart: unless-stopped
+
+# ─────────────────────────────────────────
+# NETWORKS
+# ─────────────────────────────────────────
+networks:
+  logparser-net:
+    driver: bridge
+    name: logparser-net
+
+# ─────────────────────────────────────────
+# VOLUMES
+# ─────────────────────────────────────────
+volumes:
+  timescale-data:
+  dynamodb-data:
+  redis-data:
+  minio-data:

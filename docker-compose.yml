@@ -44,7 +44,7 @@ services:
     networks:
       - logparser-net
     healthcheck:
-      test: ["CMD", "bash", "-c", "echo ruok | nc localhost 2181 | grep imok"]
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/commands/stat 2>/dev/null || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -217,11 +217,6 @@ services:
       - dynamodb-data:/home/dynamodblocal/data
     networks:
       - logparser-net
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8000/ || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
     restart: unless-stopped
 
   # ─────────────────────────────────────────
@@ -231,8 +226,7 @@ services:
     image: amazon/aws-cli:latest
     container_name: dynamodb-init
     depends_on:
-      dynamodb-local:
-        condition: service_healthy
+      - dynamodb-local
     networks:
       - logparser-net
     environment:
@@ -416,7 +410,7 @@ services:
       redis:
         condition: service_healthy
       dynamodb-local:
-        condition: service_healthy
+        condition: service_started
       minio:
         condition: service_healthy
     networks:
@@ -446,7 +440,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: app-consumer-hot
-    command: python -m app.consumers.hot
+    command: python -m app.consumers.hot_path
     ports:
       - "8083:8083"
     env_file: .env
@@ -485,7 +479,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: app-consumer-cold
-    command: python -m app.consumers.cold
+    command: python -m app.consumers.cold_path
     env_file: .env
     environment:
       DATABASE_URL: postgresql://logparser:logparser_secret@timescaledb:5432/logparser_db
@@ -525,7 +519,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: app-consumer-deadletter
-    command: python -m app.consumers.deadletter
+    command: python -m app.consumers.dead_letter
     env_file: .env
     environment:
       DATABASE_URL: postgresql://logparser:logparser_secret@timescaledb:5432/logparser_db

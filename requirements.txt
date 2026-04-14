@@ -18,7 +18,7 @@ confluent-kafka==2.4.0
 redis==5.0.4
 
 # AWS (DynamoDB + S3/MinIO)
-boto3==1.34.0
+boto3==1.34.60
 aioboto3==12.4.0
 
 # MinIO SDK (alternative to boto3 for S3-compatible)

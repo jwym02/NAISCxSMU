@@ -1,0 +1,724 @@
+openapi: 3.0.0
+info:
+  title: Smart Tool Log Parser API
+  description: |
+    Complete API documentation for the Smart Tool Log Parser system.
+    
+    This system processes manufacturing log files through multiple stages:
+    1. **Ingest** - Receive and store files
+    2. **Parse** - Extract structured data
+    3. **Normalize** - AI-powered categorization with confidence scoring
+    4. **Route** - Send to hot/cold paths based on urgency
+    5. **Query** - Natural language search interface
+    
+    ## Services
+    - **Pipeline API**: Log file upload, job tracking, review queue management
+    - **Query API**: Natural language search over processed logs
+    - **WebSocket Alerts**: Real-time P0/P1 event notifications
+  version: 1.0.0
+  contact:
+    name: API Support
+    url: https://github.com/NAISCxSMU
+
+servers:
+  - url: http://localhost:8080
+    description: Pipeline API (Production/Local)
+  - url: http://localhost:8081
+    description: Query API (Production/Local)
+
+paths:
+  # ============================================================================
+  # PIPELINE API ENDPOINTS (Port 8080)
+  # ============================================================================
+  
+  /logs/upload:
+    post:
+      tags:
+        - Pipeline - File Upload
+      summary: Upload a log file for processing
+      description: |
+        Accept a log file from user, store to MinIO, check for duplicates,
+        and queue for processing through the pipeline.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: The log file to upload (JSON, XML, CSV, LOG, TXT)
+                file_format:
+                  type: string
+                  enum: [json, xml, csv, log, txt, auto]
+                  default: auto
+                  description: File format hint (auto-detected if not provided)
+              required:
+                - file
+      responses:
+        200:
+          description: File accepted and queued for processing
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  job_id:
+                    type: string
+                    format: uuid
+                    example: "550e8400-e29b-41d4-a716-446655440000"
+                  status:
+                    type: string
+                    enum: [new, processing, completed, failed, reviewing]
+                    example: "new"
+                  file_name:
+                    type: string
+                    example: "machine_001_2024_04_17.log"
+                  message:
+                    type: string
+                    example: "File received and queued for processing"
+        409:
+          description: Duplicate file detected
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "This file has already been processed"
+                  job_id:
+                    type: string
+                    format: uuid
+                    example: "550e8400-e29b-41d4-a716-446655440000"
+        400:
+          description: Invalid request (no file, too large, etc.)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "No file provided"
+        500:
+          description: Server error during processing
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Failed to connect to MinIO"
+
+  /jobs/{id}:
+    get:
+      tags:
+        - Pipeline - Job Tracking
+      summary: Get status and progress of a log processing job
+      description: |
+        Retrieve detailed information about a specific job including:
+        - Current processing stage
+        - Progress percentage
+        - Intermediate results
+        - Any errors encountered
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          example: "550e8400-e29b-41d4-a716-446655440000"
+      responses:
+        200:
+          description: Job details retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  job_id:
+                    type: string
+                    format: uuid
+                  file_name:
+                    type: string
+                  status:
+                    type: string
+                    enum: [new, processing, completed, failed, reviewing]
+                  created_at:
+                    type: string
+                    format: date-time
+                    example: "2024-04-17T10:30:00Z"
+                  updated_at:
+                    type: string
+                    format: date-time
+                    example: "2024-04-17T10:35:00Z"
+                  progress:
+                    type: object
+                    properties:
+                      step:
+                        type: string
+                        enum: [ingest, parsing, normalizing, routing]
+                        description: Current processing stage
+                      step_progress:
+                        type: integer
+                        minimum: 0
+                        maximum: 100
+                        description: Percentage of current step complete
+                        example: 75
+                  results:
+                    type: object
+                    properties:
+                      records_processed:
+                        type: integer
+                        example: 1250
+                      records_routed_hot:
+                        type: integer
+                        description: P0/P1 urgent events
+                        example: 45
+                      records_routed_cold:
+                        type: integer
+                        description: P2+ routine events
+                        example: 1200
+                      records_in_review:
+                        type: integer
+                        description: Low confidence items awaiting human approval
+                        example: 5
+                  error:
+                    type: string
+                    nullable: true
+                    example: null
+        404:
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Job not found"
+
+  /queue:
+    get:
+      tags:
+        - Pipeline - Review Queue
+      summary: List all low-confidence events requiring human review
+      description: |
+        Retrieve items from the review queue - events with low confidence scores
+        that need human judgment before routing to hot/cold paths.
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+            maximum: 1000
+          description: Maximum number of items to return
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+          description: Pagination offset
+      responses:
+        200:
+          description: Review queue items retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total_items:
+                    type: integer
+                    example: 5
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                        job_id:
+                          type: string
+                          format: uuid
+                        timestamp:
+                          type: string
+                          format: date-time
+                          example: "2024-04-17T10:30:00Z"
+                        original_event:
+                          type: object
+                          properties:
+                            source:
+                              type: string
+                              example: "machine_001"
+                            event_type:
+                              type: string
+                              example: "temperature_warning"
+                            severity:
+                              type: string
+                              enum: [info, warning, error, critical]
+                            message:
+                              type: string
+                              example: "Temperature exceeded 85°C threshold"
+                        ai_suggestion:
+                          type: object
+                          properties:
+                            category:
+                              type: string
+                              example: "thermal_event"
+                            root_cause:
+                              type: string
+                              example: "cooling_system_malfunction"
+                            recommended_action:
+                              type: string
+                              example: "Check cooling system and verify airflow"
+                            confidence:
+                              type: number
+                              format: float
+                              minimum: 0
+                              maximum: 1
+                              example: 0.45
+                        reason:
+                          type: string
+                          example: "Low confidence in categorization"
+                        created_at:
+                          type: string
+                          format: date-time
+
+  /queue/{id}/review:
+    post:
+      tags:
+        - Pipeline - Review Queue
+      summary: Approve or reject a review queue item
+      description: |
+        Submit human decision on a low-confidence event.
+        Approved items are routed to hot/cold path.
+        Rejected items are discarded or marked for investigation.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          example: "550e8400-e29b-41d4-a716-446655440000"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                decision:
+                  type: string
+                  enum: [approved, rejected]
+                  description: Human decision on this event
+                notes:
+                  type: string
+                  description: Optional reason for decision
+                  example: "Confirmed thermal event, cooling needs maintenance"
+              required:
+                - decision
+      responses:
+        200:
+          description: Decision recorded successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  decision:
+                    type: string
+                    enum: [approved, rejected]
+                  message:
+                    type: string
+                    example: "Item approved and sent to hot path"
+        404:
+          description: Queue item not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Queue item not found"
+        400:
+          description: Invalid decision value
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Invalid decision. Must be 'approved' or 'rejected'"
+
+  /health:
+    get:
+      tags:
+        - Pipeline - System
+      summary: Pipeline service health check
+      description: |
+        Check if Pipeline service and all dependencies are healthy.
+        Returns status of database, Kafka, MinIO, and Redis connections.
+      responses:
+        200:
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [healthy]
+                  services:
+                    type: object
+                    properties:
+                      kafka:
+                        type: string
+                        enum: [connected, disconnected]
+                      timescaledb:
+                        type: string
+                        enum: [connected, disconnected]
+                      minio:
+                        type: string
+                        enum: [connected, disconnected]
+                      redis:
+                        type: string
+                        enum: [connected, disconnected]
+                  timestamp:
+                    type: string
+                    format: date-time
+        503:
+          description: Service is unhealthy (one or more dependencies down)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [unhealthy]
+                  services:
+                    type: object
+                  timestamp:
+                    type: string
+                    format: date-time
+
+  # ============================================================================
+  # QUERY API ENDPOINTS (Port 8081)
+  # ============================================================================
+
+  /query:
+    post:
+      tags:
+        - Query - Search
+      summary: Natural language search over processed logs
+      description: |
+        Ask a question in plain English and receive matching log events.
+        The service converts your question to SQL, executes it, and returns results.
+        
+        ### Supported Query Types:
+        - Count queries: "How many temperature warnings?"
+        - Filter queries: "Show me P0 events from machine_001"
+        - Time-range queries: "Errors in the last 24 hours"
+        - Aggregation queries: "Count logs by severity"
+        - Machine-specific: "All events from machine_005"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                question:
+                  type: string
+                  description: Natural language question about logs
+                  example: "How many temperature warnings occurred in machine_001 today?"
+                limit:
+                  type: integer
+                  default: 100
+                  maximum: 1000
+                  description: Maximum rows to return
+                time_range:
+                  type: string
+                  enum: ["24h", "7d", "30d", "all"]
+                  default: "all"
+                  description: Time window for query
+              required:
+                - question
+      responses:
+        200:
+          description: Query executed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  question:
+                    type: string
+                    example: "How many temperature warnings in machine_001 today?"
+                  sql_query:
+                    type: string
+                    description: Generated SQL for transparency/debugging
+                    example: "SELECT COUNT(*) FROM log_events WHERE source='machine_001' AND event_type='temperature_warning' AND timestamp > now() - interval '24 hours'"
+                  results:
+                    type: array
+                    description: Query results as list of objects
+                    items:
+                      type: object
+                      example:
+                        {
+                          "machine": "machine_001",
+                          "event_type": "temperature_warning",
+                          "count": 45,
+                          "timestamp": "2024-04-17T10:30:00Z"
+                        }
+                  result_count:
+                    type: integer
+                    example: 1
+                  query_time_ms:
+                    type: integer
+                    description: Time to execute query in milliseconds
+                    example: 234
+        400:
+          description: Invalid query
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Question cannot be empty"
+        408:
+          description: Query timeout (exceeded 30 seconds)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Query execution timeout - result set too large"
+        500:
+          description: Server error (LLM error, database error, etc.)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Failed to connect to AI model"
+
+  /query/health:
+    get:
+      tags:
+        - Query - System
+      summary: Query service health check
+      description: |
+        Check if Query service and dependencies are healthy.
+        Returns status of TimescaleDB and AI model availability.
+      responses:
+        200:
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [healthy]
+                  services:
+                    type: object
+                    properties:
+                      timescaledb:
+                        type: string
+                        enum: [connected, disconnected]
+                      openrouter_api:
+                        type: string
+                        enum: [connected, disconnected]
+                  timestamp:
+                    type: string
+                    format: date-time
+        503:
+          description: Service is unhealthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [unhealthy]
+                  services:
+                    type: object
+                  timestamp:
+                    type: string
+                    format: date-time
+
+  # ============================================================================
+  # WEBSOCKET ENDPOINTS (Port 8083)
+  # ============================================================================
+
+  /ws/alerts:
+    get:
+      tags:
+        - WebSocket - Real-time Alerts
+      summary: WebSocket connection for real-time P0/P1 event stream
+      description: |
+        Connect via WebSocket to receive real-time notifications of urgent events.
+        
+        ### Connection:
+        ```
+        ws://localhost:8083/ws/alerts
+        ```
+        
+        ### Messages Received:
+        ```json
+        {
+          "event_id": "uuid",
+          "timestamp": "2024-04-17T10:30:00Z",
+          "source": "machine_001",
+          "severity": "critical",
+          "event_type": "fire_detected",
+          "message": "Fire detected near chamber 3",
+          "category": "thermal_event",
+          "confidence": 0.98
+        }
+        ```
+        
+        ### Connection Management:
+        - Connection automatically closes after 30 minutes of inactivity
+        - Reconnect with exponential backoff on disconnect
+        - Messages are sent as newline-delimited JSON
+      responses:
+        101:
+          description: Upgrade to WebSocket connection
+        400:
+          description: Invalid WebSocket request
+        503:
+          description: WebSocket service unavailable
+
+components:
+  schemas:
+    LogEvent:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        job_id:
+          type: string
+          format: uuid
+        timestamp:
+          type: string
+          format: date-time
+        source:
+          type: string
+          description: Machine or device identifier
+          example: "machine_001"
+        event_type:
+          type: string
+          example: "temperature_warning"
+        severity:
+          type: string
+          enum: [info, warning, error, critical]
+        message:
+          type: string
+        category:
+          type: string
+          description: AI-normalized event category
+          example: "thermal_event"
+        root_cause:
+          type: string
+          description: AI inference of root cause
+          example: "cooling_system_malfunction"
+        confidence:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          description: Confidence score of AI categorization
+
+    Job:
+      type: object
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        file_name:
+          type: string
+        status:
+          type: string
+          enum: [new, processing, completed, failed, reviewing]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        progress:
+          type: object
+          properties:
+            step:
+              type: string
+              enum: [ingest, parsing, normalizing, routing]
+            step_progress:
+              type: integer
+              minimum: 0
+              maximum: 100
+
+    ReviewQueueItem:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        job_id:
+          type: string
+          format: uuid
+        original_event:
+          $ref: "#/components/schemas/LogEvent"
+        ai_suggestion:
+          type: object
+          properties:
+            category:
+              type: string
+            confidence:
+              type: number
+              format: float
+        reason:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+tags:
+  - name: Pipeline - File Upload
+    description: Upload and manage log file ingestion
+  - name: Pipeline - Job Tracking
+    description: Track processing progress of uploaded files
+  - name: Pipeline - Review Queue
+    description: Manage human review queue for low-confidence events
+  - name: Pipeline - System
+    description: System health and monitoring
+  - name: Query - Search
+    description: Natural language search over processed logs
+  - name: Query - System
+    description: System health and monitoring
+  - name: WebSocket - Real-time Alerts
+    description: Real-time event notifications

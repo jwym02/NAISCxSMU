@@ -203,16 +203,10 @@ services:
   dynamodb-local:
     image: amazon/dynamodb-local:latest
     container_name: dynamodb-local
+    user: root                          # ← run as root so it can write to the volume
     ports:
       - "8000:8000"
-    command:
-      [
-        "-jar",
-        "DynamoDBLocal.jar",
-        "-sharedDb",
-        "-dbPath",
-        "/home/dynamodblocal/data",
-      ]
+    command: ["-jar", "DynamoDBLocal.jar", "-sharedDb", "-dbPath", "/home/dynamodblocal/data"]
     volumes:
       - dynamodb-data:/home/dynamodblocal/data
     networks:
@@ -264,6 +258,22 @@ services:
       aws dynamodb list-tables --endpoint-url http://dynamodb-local:8000
       "
 
+  dynamodb-admin:
+    image: node:18-alpine
+    container_name: dynamodb-admin
+    ports:
+      - "8001:8001"
+    environment:
+      DYNAMO_ENDPOINT: http://dynamodb-local:8000
+      AWS_ACCESS_KEY_ID: dummy
+      AWS_SECRET_ACCESS_KEY: dummy
+      AWS_REGION: ap-southeast-1
+    command: sh -c "npm install -g dynamodb-admin && dynamodb-admin"
+    depends_on:
+      - dynamodb-local
+    networks:
+      - logparser-net    # ← this is the critical part, must match your other services
+    restart: unless-stopped
   # ─────────────────────────────────────────
   # REDIS
   # Deduplication only.

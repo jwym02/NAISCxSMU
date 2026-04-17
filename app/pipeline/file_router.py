@@ -1,1 +1,0 @@
-# Step 6: urgency classify (P0/P1/P2/DeadLetter), produce event to Kafka topic

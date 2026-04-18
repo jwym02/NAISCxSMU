@@ -30,6 +30,7 @@ from aiokafka import AIOKafkaConsumer
 
 from app.shared.db import insert_normalized_event
 from app.shared.kafka_client import KAFKA_BOOTSTRAP_SERVERS
+from app.shared.text_tokens import build_event_search_text
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +116,12 @@ async def process_event(topic: str, event: dict):
         except Exception:
             timestamp = datetime.now(timezone.utc)
         
-        # Insert into database
+        st = build_event_search_text(
+            source,
+            event.get("event_type", "unknown"),
+            message,
+            ai_category,
+        )
         await insert_normalized_event(
             job_id=job_id,
             timestamp=timestamp,
@@ -128,7 +134,8 @@ async def process_event(topic: str, event: dict):
             ai_recommended_action=ai_recommended_action,
             confidence_score=confidence,
             requires_review=False,
-            review_reason=""
+            review_reason="",
+            search_text=st or None,
         )
         logger.info(f"Inserted event from {source}: {message}")
         

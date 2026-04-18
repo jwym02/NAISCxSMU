@@ -115,6 +115,12 @@ async def init_schema():
         """)
         logger.info("Created normalized_events table")
 
+        await conn.execute("""
+            ALTER TABLE normalized_events
+            ADD COLUMN IF NOT EXISTS search_text TEXT
+        """)
+        logger.info("Ensured normalized_events.search_text column")
+
         # Convert normalized_events to hypertable if not already
         await conn.execute("""
             SELECT create_hypertable('normalized_events', 'timestamp', if_not_exists => TRUE)
@@ -158,6 +164,14 @@ async def init_schema():
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_normalized_source ON normalized_events (source)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_normalized_severity ON normalized_events (severity)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_normalized_category ON normalized_events (ai_category)")
+        await conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_normalized_search_text_gin
+            ON normalized_events USING GIN (
+                to_tsvector('simple', COALESCE(search_text, ''))
+            )
+            """
+        )
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_event_routing_topic ON event_routing (kafka_topic)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_review_status ON review_queue_status (status)")
         logger.info("Created indexes")
@@ -231,6 +245,7 @@ async def insert_normalized_event(
     confidence_score: float,
     requires_review: bool,
     review_reason: Optional[str] = None,
+    search_text: Optional[str] = None,
 ) -> bool:
     """Insert a normalized event."""
     pool = await get_pool()
@@ -240,13 +255,13 @@ async def insert_normalized_event(
                 INSERT INTO normalized_events (
                     job_id, timestamp, source, event_type, severity, message,
                     ai_category, ai_root_cause, ai_recommended_action,
-                    confidence_score, requires_review, review_reason
+                    confidence_score, requires_review, review_reason, search_text
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
             """,
             job_id, timestamp, source, event_type, severity, message,
             ai_category, ai_root_cause, ai_recommended_action,
-            confidence_score, requires_review, review_reason
+            confidence_score, requires_review, review_reason, search_text
             )
         logger.info(f"Inserted normalized event: job_id={job_id}")
         return True

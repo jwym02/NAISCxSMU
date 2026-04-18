@@ -1,11 +1,18 @@
-# app/query/__init__.py
-# Exposes the NL2SQL query service.
+# app.query — lazy exports so importing submodules (e.g. sql_validate) does not load FastAPI + DB.
 
-from app.query.main import app, generate_sql, execute_query, query
+from typing import Any
 
 __all__ = [
-    "app",           # FastAPI application instance
-    "generate_sql",  # Convert natural language to SQL
-    "execute_query", # Execute SQL and return results
-    "query",         # Main query endpoint (POST /query)
+    "app",
+    "generate_sql",
+    "execute_query",
+    "query",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    if name in __all__:
+        from app.query import main as _main
+
+        return getattr(_main, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

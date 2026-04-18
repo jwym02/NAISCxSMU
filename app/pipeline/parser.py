@@ -201,7 +201,9 @@ def parse_json(file_data: bytes):
 
         for i, item in enumerate(items):
             try:
-                records.append(flatten_dict(item))
+                flat = flatten_dict(item)
+                flat["line_no"] = i + 1
+                records.append(flat)
             except Exception as e:
                 errors.append({"line": i, "error": str(e)})
     except json.JSONDecodeError as e:
@@ -217,7 +219,9 @@ def parse_xml(file_data: bytes):
         items = children if children else [root]
         for i, elem in enumerate(items):
             try:
-                records.append(flatten_dict(xml_element_to_dict(elem)))
+                flat = flatten_dict(xml_element_to_dict(elem))
+                flat["line_no"] = i + 1
+                records.append(flat)
             except Exception as e:
                 errors.append({"line": i, "error": str(e)})
     except ET.ParseError as e:
@@ -231,7 +235,9 @@ def parse_csv(file_data: bytes):
         reader = csv.DictReader(io.StringIO(text))
         for i, row in enumerate(reader):
             try:
-                records.append(dict(row))
+                rec = dict(row)
+                rec["line_no"] = i + 2  # header line 1; first data row line 2
+                records.append(rec)
             except Exception as e:
                 errors.append({"line": i + 2, "error": str(e)})  # +2: 1 header + 1-indexed
     except Exception as e:
@@ -247,7 +253,7 @@ def parse_log_txt(file_data: bytes):
         if not line:
             continue
         try:
-            raw = {"raw_line": line}
+            raw = {"raw_line": line, "line_no": i + 1}
             ts = RE_TIMESTAMP.search(line)
             if ts:
                 raw["timestamp"] = ts.group()
@@ -297,14 +303,18 @@ def normalize_record(raw: dict, rules: dict) -> dict:
 
     severity_raw = (find("severity") or "").upper()
 
-    return {
+    line_no = raw.get("line_no")
+    out = {
         "timestamp":  timestamp,
         "source":     find("source")     or "unknown",
         "event_type": find("event_type") or "unknown",
         "severity":   SEVERITY_MAP.get(severity_raw, "info"),
         "message":    find("message")    or raw.get("raw_line", ""),
-        "raw_fields": raw
+        "raw_fields": raw,
     }
+    if line_no is not None:
+        out["line_no"] = line_no
+    return out
 
 def parse_log(file_data: bytes, file_format: str) -> dict:
     if not file_data:
@@ -324,6 +334,13 @@ def parse_log(file_data: bytes, file_format: str) -> dict:
 
     rules = fetch_normalization_rules()
     normalized = [normalize_record(r, rules) for r in raw_records]
+
+    if not normalized and file_data:
+        if not errors:
+            errors.append({
+                "line": 0,
+                "error": "No records could be extracted; verify file format or pass an explicit format hint.",
+            })
 
     return {
         "detected_format": detected_format,

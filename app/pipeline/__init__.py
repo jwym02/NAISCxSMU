@@ -1,22 +1,31 @@
-# app/pipeline/__init__.py
-# Exposes the pipeline's key public functions.
-# Other modules (e.g. tests) import the pipeline steps
-# from here rather than from internal files.
-#
-# The pipeline runs in this order:
-#   ingest → parser → normalizer → router
-#
-# Usage:
-#   from app.pipeline import ingest_log, parse_log, normalize_log, route_event
+# app.pipeline — lazy exports so `from app.pipeline.parser import parse_log`
+# does not pull in MinIO/Kafka until those symbols are used.
 
-from app.pipeline.ingest import ingest_log
-from app.pipeline.parser import parse_log
-from app.pipeline.normalizer import normalize_log
-from app.pipeline.router import route_event
+from typing import Any
 
 __all__ = [
-    "ingest_log",    # Step 1+2: store to MinIO, Redis dedup check
-    "parse_log",     # Step 3+4: detect format, extract fields
-    "normalize_log", # Step 5:   AI normalize, confidence score
-    "route_event",   # Step 6:   urgency classify, produce to Kafka
+    "ingest_log",
+    "parse_log",
+    "normalize_log",
+    "route_event",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    if name == "ingest_log":
+        from app.pipeline.ingest import ingest_log as _ingest_log
+
+        return _ingest_log
+    if name == "parse_log":
+        from app.pipeline.parser import parse_log as _parse_log
+
+        return _parse_log
+    if name == "normalize_log":
+        from app.pipeline.normalizer import normalize_log as _normalize_log
+
+        return _normalize_log
+    if name == "route_event":
+        from app.pipeline.router import route_event as _route_event
+
+        return _route_event
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

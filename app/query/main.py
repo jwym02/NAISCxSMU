@@ -14,12 +14,18 @@ import logging
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta, timezone
 import httpx
-import asyncio
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from app.query.sql_validate import validate_generated_sql
 from app.shared.db import get_pool, close_pool
+from app.shared.text_tokens import (
+    MAX_USER_PROMPT_CHARS,
+    normalize_prompt,
+    tokenize_for_match,
+)
 
 # Configuration
 OPENROUTER_API_KEY = os.getenv("AI_KEY")
@@ -31,6 +37,15 @@ logger = logging.getLogger(__name__)
 
 # FastAPI app
 app = FastAPI(title="Query Service")
+
+_cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:3000")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o.strip() for o in _cors_origins.split(",") if o.strip()],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 class QueryRequest(BaseModel):
@@ -77,6 +92,7 @@ DATABASE_SCHEMA = """
 - confidence_score: FLOAT (0.0-1.0, higher = more confident)
 - requires_review: BOOLEAN (TRUE if low confidence)
 - review_reason: TEXT (reason for review queue)
+- search_text: TEXT (normalized tokens for search / full-text; use for keyword filters)
 - created_at: TIMESTAMP WITH TIME ZONE
 
 ### Regular Tables
@@ -230,6 +246,8 @@ SQL Query:"""
                     status_code=400,
                     detail="Generated query must be a SELECT statement"
                 )
+
+            validate_generated_sql(sql_query)
             
             logger.info(f"Generated SQL: {sql_query[:200]}...")
             return sql_query
@@ -295,18 +313,31 @@ async def query(request: QueryRequest):
     """
     import time
     start_time = time.time()
-    
-    # Generate SQL from natural language
-    sql_query = await generate_sql(request.query, request.limit, request.time_range_hours)
-    
-    # Execute query
+
+    raw_q = (request.query or "").strip()
+    if not raw_q:
+        raise HTTPException(status_code=400, detail="Query cannot be empty")
+    if len(raw_q) > MAX_USER_PROMPT_CHARS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Query exceeds maximum length ({MAX_USER_PROMPT_CHARS} characters)",
+        )
+    nq = normalize_prompt(raw_q)
+    logger.info(
+        "NL query chars=%s distinct_tokens=%s",
+        len(nq),
+        len(set(tokenize_for_match(nq))),
+    )
+
+    sql_query = await generate_sql(nq, request.limit, request.time_range_hours)
+
     rows = await execute_query(sql_query)
     
     # Calculate execution time
     execution_time_ms = (time.time() - start_time) * 1000
     
     return QueryResponse(
-        original_query=request.query,
+        original_query=raw_q,
         generated_sql=sql_query,
         rows=rows,
         row_count=len(rows),

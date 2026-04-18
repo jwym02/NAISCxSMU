@@ -12,9 +12,9 @@ info:
     5. **Query** - Natural language search interface
     
     ## Services
-    - **Pipeline API**: Log file upload, job tracking, review queue management
-    - **Query API**: Natural language search over processed logs
-    - **WebSocket Alerts**: Real-time P0/P1 event notifications
+    - **Pipeline API** (port 8080): synchronous `POST /process`, health; async job APIs are roadmap
+    - **Query API** (port 8081): natural language search, schema
+    - **WebSocket Alerts**: real-time P0/P1 (roadmap)
   version: 1.0.0
   contact:
     name: API Support
@@ -31,14 +31,22 @@ paths:
   # PIPELINE API ENDPOINTS (Port 8080)
   # ============================================================================
   
-  /logs/upload:
+  /process:
     post:
       tags:
         - Pipeline - File Upload
-      summary: Upload a log file for processing
+      summary: Upload and process a log file (synchronous)
       description: |
-        Accept a log file from user, store to MinIO, check for duplicates,
-        and queue for processing through the pipeline.
+        Runs ingest → parse → normalize → route → persist in a single request and returns a `ProcessResult`.
+        HTTP status: 200 success, 206 partial_success (warnings in `errors`), 400 failed or empty file.
+      parameters:
+        - name: format
+          in: query
+          required: false
+          schema:
+            type: string
+            description: Optional format hint; omit for auto-detect
+            enum: [json, xml, csv, log, txt]
       requestBody:
         required: true
         content:
@@ -49,93 +57,96 @@ paths:
                 file:
                   type: string
                   format: binary
-                  description: The log file to upload (JSON, XML, CSV, LOG, TXT)
-                file_format:
-                  type: string
-                  enum: [json, xml, csv, log, txt, auto]
-                  default: auto
-                  description: File format hint (auto-detected if not provided)
+                  description: Log file (JSON, XML, CSV, LOG, TXT)
               required:
                 - file
       responses:
-        200:
-          description: File accepted and queued for processing
+        "200":
+          description: Processing completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessResult"
+        "206":
+          description: Completed with warnings (partial_success)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessResult"
+        "400":
+          description: Failed processing or bad request (empty file, etc.)
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ProcessResult"
+                  - type: object
+                    properties:
+                      detail:
+                        type: string
+        "500":
+          description: Server error
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  job_id:
+                  detail:
                     type: string
-                    format: uuid
-                    example: "550e8400-e29b-41d4-a716-446655440000"
-                  status:
-                    type: string
-                    enum: [new, processing, completed, failed, reviewing]
-                    example: "new"
-                  file_name:
-                    type: string
-                    example: "machine_001_2024_04_17.log"
-                  message:
-                    type: string
-                    example: "File received and queued for processing"
-        409:
-          description: Duplicate file detected
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: "This file has already been processed"
-                  job_id:
-                    type: string
-                    format: uuid
-                    example: "550e8400-e29b-41d4-a716-446655440000"
-        400:
-          description: Invalid request (no file, too large, etc.)
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: "No file provided"
-        500:
-          description: Server error during processing
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: "Failed to connect to MinIO"
 
-  /jobs/{id}:
+  /preview:
+    post:
+      tags:
+        - Pipeline - File Upload
+      summary: Parse-only preview (no ingest / Kafka / AI)
+      description: |
+        Returns parsed records and errors from raw log text. Size- and rate-limited.
+        Use for fast UI feedback before running the full `POST /process` pipeline.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                text:
+                  type: string
+                  description: Raw log content (UTF-8)
+                format:
+                  type: string
+                  nullable: true
+                  description: Optional format hint (json, xml, csv, log, txt); omit or null for auto-detect
+              required:
+                - text
+      responses:
+        "200":
+          description: Parse preview result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ParsePreviewOut"
+        "413":
+          description: Payload too large
+        "429":
+          description: Rate limit exceeded
+
+  /status/{job_id}:
     get:
       tags:
         - Pipeline - Job Tracking
-      summary: Get status and progress of a log processing job
+      summary: Job status (placeholder)
       description: |
-        Retrieve detailed information about a specific job including:
-        - Current processing stage
-        - Progress percentage
-        - Intermediate results
-        - Any errors encountered
+        **Current implementation:** returns a placeholder payload. Persistent job tracking is roadmap.
+        Use `job_id` from the synchronous `POST /process` response for correlation only.
       parameters:
-        - name: id
+        - name: job_id
           in: path
           required: true
           schema:
             type: string
-            format: uuid
-          example: "550e8400-e29b-41d4-a716-446655440000"
       responses:
-        200:
-          description: Job details retrieved successfully
+        "200":
+          description: Placeholder status object
           content:
             application/json:
               schema:
@@ -143,72 +154,18 @@ paths:
                 properties:
                   job_id:
                     type: string
-                    format: uuid
-                  file_name:
-                    type: string
                   status:
                     type: string
-                    enum: [new, processing, completed, failed, reviewing]
-                  created_at:
+                  note:
                     type: string
-                    format: date-time
-                    example: "2024-04-17T10:30:00Z"
-                  updated_at:
-                    type: string
-                    format: date-time
-                    example: "2024-04-17T10:35:00Z"
-                  progress:
-                    type: object
-                    properties:
-                      step:
-                        type: string
-                        enum: [ingest, parsing, normalizing, routing]
-                        description: Current processing stage
-                      step_progress:
-                        type: integer
-                        minimum: 0
-                        maximum: 100
-                        description: Percentage of current step complete
-                        example: 75
-                  results:
-                    type: object
-                    properties:
-                      records_processed:
-                        type: integer
-                        example: 1250
-                      records_routed_hot:
-                        type: integer
-                        description: P0/P1 urgent events
-                        example: 45
-                      records_routed_cold:
-                        type: integer
-                        description: P2+ routine events
-                        example: 1200
-                      records_in_review:
-                        type: integer
-                        description: Low confidence items awaiting human approval
-                        example: 5
-                  error:
-                    type: string
-                    nullable: true
-                    example: null
-        404:
-          description: Job not found
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: "Job not found"
 
   /queue:
     get:
       tags:
         - Pipeline - Review Queue
-      summary: List all low-confidence events requiring human review
+      summary: "[Reserved] List review-queue items"
       description: |
+        **Not implemented** on the pipeline HTTP service in v1 (contract only).
         Retrieve items from the review queue - events with low confidence scores
         that need human judgment before routing to hot/cold paths.
       parameters:
@@ -295,7 +252,7 @@ paths:
     post:
       tags:
         - Pipeline - Review Queue
-      summary: Approve or reject a review queue item
+      summary: "[Reserved] Approve or reject a review queue item"
       description: |
         Submit human decision on a low-confidence event.
         Approved items are routed to hot/cold path.
@@ -369,11 +326,10 @@ paths:
         - Pipeline - System
       summary: Pipeline service health check
       description: |
-        Check if Pipeline service and all dependencies are healthy.
-        Returns status of database, Kafka, MinIO, and Redis connections.
+        Liveness check for the pipeline process (port 8080).
       responses:
-        200:
-          description: Service is healthy
+        "200":
+          description: Service is up
           content:
             application/json:
               schema:
@@ -381,37 +337,10 @@ paths:
                 properties:
                   status:
                     type: string
-                    enum: [healthy]
-                  services:
-                    type: object
-                    properties:
-                      kafka:
-                        type: string
-                        enum: [connected, disconnected]
-                      timescaledb:
-                        type: string
-                        enum: [connected, disconnected]
-                      minio:
-                        type: string
-                        enum: [connected, disconnected]
-                      redis:
-                        type: string
-                        enum: [connected, disconnected]
-                  timestamp:
+                    example: ok
+                  service:
                     type: string
-                    format: date-time
-        503:
-          description: Service is unhealthy (one or more dependencies down)
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                    enum: [unhealthy]
-                  services:
-                    type: object
+                    example: pipeline
                   timestamp:
                     type: string
                     format: date-time
@@ -442,7 +371,7 @@ paths:
             schema:
               type: object
               properties:
-                question:
+                query:
                   type: string
                   description: Natural language question about logs
                   example: "How many temperature warnings occurred in machine_001 today?"
@@ -451,13 +380,12 @@ paths:
                   default: 100
                   maximum: 1000
                   description: Maximum rows to return
-                time_range:
-                  type: string
-                  enum: ["24h", "7d", "30d", "all"]
-                  default: "all"
-                  description: Time window for query
+                time_range_hours:
+                  type: integer
+                  default: 24
+                  description: Hint window in hours passed to the NL→SQL layer
               required:
-                - question
+                - query
       responses:
         200:
           description: Query executed successfully
@@ -466,32 +394,22 @@ paths:
               schema:
                 type: object
                 properties:
-                  question:
+                  original_query:
                     type: string
-                    example: "How many temperature warnings in machine_001 today?"
-                  sql_query:
+                  generated_sql:
                     type: string
                     description: Generated SQL for transparency/debugging
-                    example: "SELECT COUNT(*) FROM log_events WHERE source='machine_001' AND event_type='temperature_warning' AND timestamp > now() - interval '24 hours'"
-                  results:
+                  rows:
                     type: array
-                    description: Query results as list of objects
+                    description: Query result rows
                     items:
                       type: object
-                      example:
-                        {
-                          "machine": "machine_001",
-                          "event_type": "temperature_warning",
-                          "count": 45,
-                          "timestamp": "2024-04-17T10:30:00Z"
-                        }
-                  result_count:
+                      additionalProperties: true
+                  row_count:
                     type: integer
-                    example: 1
-                  query_time_ms:
-                    type: integer
-                    description: Time to execute query in milliseconds
-                    example: 234
+                  execution_time_ms:
+                    type: number
+                    format: float
         400:
           description: Invalid query
           content:
@@ -499,9 +417,9 @@ paths:
               schema:
                 type: object
                 properties:
-                  error:
+                  detail:
                     type: string
-                    example: "Question cannot be empty"
+                    example: "Query cannot be empty"
         408:
           description: Query timeout (exceeded 30 seconds)
           content:
@@ -527,13 +445,13 @@ paths:
     get:
       tags:
         - Query - System
-      summary: Query service health check
+      summary: Query service health (documented path alias)
       description: |
-        Check if Query service and dependencies are healthy.
-        Returns status of TimescaleDB and AI model availability.
+        The running Query service exposes **`GET /health`** on port **8081** (path `/health`).
+        This `/query/health` entry documents the same contract in a merged spec without duplicate YAML keys.
       responses:
-        200:
-          description: Service is healthy
+        "200":
+          description: Service is up
           content:
             application/json:
               schema:
@@ -541,31 +459,10 @@ paths:
                 properties:
                   status:
                     type: string
-                    enum: [healthy]
-                  services:
-                    type: object
-                    properties:
-                      timescaledb:
-                        type: string
-                        enum: [connected, disconnected]
-                      openrouter_api:
-                        type: string
-                        enum: [connected, disconnected]
-                  timestamp:
+                    example: ok
+                  service:
                     type: string
-                    format: date-time
-        503:
-          description: Service is unhealthy
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                    enum: [unhealthy]
-                  services:
-                    type: object
+                    example: query
                   timestamp:
                     type: string
                     format: date-time
@@ -615,6 +512,78 @@ paths:
 
 components:
   schemas:
+    ProcessResult:
+      type: object
+      description: Synchronous pipeline outcome from POST /process
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        file_name:
+          type: string
+        file_format:
+          type: string
+          description: Detected or hinted format (e.g. json, csv, log)
+        status:
+          type: string
+          enum: [success, partial_success, failed]
+        events_processed:
+          type: integer
+        events_routed:
+          type: object
+          additionalProperties:
+            type: integer
+          description: Counts per Kafka topic (e.g. logs.p0)
+        events_in_review:
+          type: integer
+        errors:
+          type: array
+          items:
+            type: string
+        timestamp:
+          type: string
+          format: date-time
+        records_preview:
+          type: array
+          nullable: true
+          description: Sample of normalized events (cap configured server-side)
+          items:
+            type: object
+            additionalProperties: true
+      required:
+        - job_id
+        - file_name
+        - file_format
+        - status
+        - events_processed
+        - events_routed
+        - events_in_review
+        - errors
+        - timestamp
+
+    ParsePreviewOut:
+      type: object
+      properties:
+        detected_format:
+          type: string
+        record_count:
+          type: integer
+        records:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        parse_errors:
+          type: array
+          items: {}
+        input_char_count:
+          type: integer
+        input_approx_tokens:
+          type: number
+          format: float
+        tokenizer_version:
+          type: string
+
     LogEvent:
       type: object
       properties:

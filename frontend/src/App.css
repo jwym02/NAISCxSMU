@@ -1,0 +1,248 @@
+.app {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 3rem;
+}
+
+.banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.65rem 1rem;
+  border-radius: 8px;
+  margin-bottom: 1.5rem;
+  font-size: 0.9rem;
+}
+
+.banner.ok {
+  background: #132a1e;
+  border: 1px solid #2d6a4f;
+}
+
+.banner.warn {
+  background: #2a2110;
+  border: 1px solid #b08900;
+}
+
+.banner.err {
+  background: #2a1518;
+  border: 1px solid #9b2c33;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+h1 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin: 0 0 0.25rem;
+}
+
+.sub {
+  color: #9aa0a6;
+  font-size: 0.95rem;
+  margin: 0 0 1.5rem;
+}
+
+section.card {
+  background: #1a2332;
+  border: 1px solid #2d3a4d;
+  border-radius: 10px;
+  padding: 1.1rem 1.2rem;
+  margin-bottom: 1.25rem;
+}
+
+section.card h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.dropzone {
+  border: 2px dashed #3d4f68;
+  border-radius: 8px;
+  padding: 1.25rem;
+  text-align: center;
+  color: #9aa0a6;
+  margin-bottom: 0.75rem;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.dropzone:hover,
+.dropzone.drag {
+  border-color: #5c7cfa;
+  background: rgba(92, 124, 250, 0.06);
+}
+
+.dropzone input[type="file"] {
+  display: none;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+label.fmt {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+  color: #c4c7cc;
+}
+
+select {
+  background: #0f1419;
+  color: #e8eaed;
+  border: 1px solid #3d4f68;
+  border-radius: 6px;
+  padding: 0.35rem 0.5rem;
+}
+
+textarea.input-log {
+  width: 100%;
+  min-height: 140px;
+  background: #0f1419;
+  color: #e8eaed;
+  border: 1px solid #3d4f68;
+  border-radius: 8px;
+  padding: 0.65rem 0.75rem;
+  resize: vertical;
+  font-family: ui-monospace, "Cascadia Code", monospace;
+  font-size: 0.82rem;
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.88rem;
+  margin: 0.5rem 0;
+}
+
+.btn {
+  background: #3b5bdb;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn.secondary {
+  background: #343a46;
+}
+
+.status-msg {
+  font-size: 0.9rem;
+  margin-top: 0.5rem;
+}
+
+.status-msg.success {
+  color: #69db7c;
+}
+
+.status-msg.partial {
+  color: #ffd43b;
+}
+
+.status-msg.failed {
+  color: #ff8787;
+}
+
+.errors {
+  margin-top: 0.75rem;
+  padding: 0.65rem 0.75rem;
+  background: rgba(255, 80, 80, 0.08);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  color: #ffb4b4;
+}
+
+.output-toggle {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.output-toggle button {
+  background: #252f3f;
+  color: #c4c7cc;
+  border: 1px solid #3d4f68;
+  border-radius: 6px;
+  padding: 0.35rem 0.65rem;
+  cursor: pointer;
+}
+
+.output-toggle button.active {
+  background: #3b5bdb;
+  border-color: #3b5bdb;
+  color: #fff;
+}
+
+pre.json-out {
+  margin: 0;
+  padding: 0.75rem;
+  background: #0f1419;
+  border-radius: 8px;
+  overflow: auto;
+  max-height: 420px;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  border: 1px solid #2d3a4d;
+}
+
+.table-wrap {
+  overflow: auto;
+  max-height: 360px;
+  border-radius: 8px;
+  border: 1px solid #2d3a4d;
+}
+
+table.result {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+table.result th,
+table.result td {
+  border-bottom: 1px solid #2d3a4d;
+  padding: 0.4rem 0.5rem;
+  text-align: left;
+}
+
+table.result th {
+  background: #141c28;
+  position: sticky;
+  top: 0;
+}
+
+.sql-box {
+  font-family: ui-monospace, monospace;
+  font-size: 0.78rem;
+  background: #0f1419;
+  padding: 0.65rem;
+  border-radius: 6px;
+  overflow: auto;
+  border: 1px solid #2d3a4d;
+  margin: 0.5rem 0;
+}

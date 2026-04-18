@@ -14,18 +14,26 @@ Architecture:
 
 import os
 import logging
-from typing import Optional
+import time
+from collections import deque
+from typing import Any, Dict, List, Optional
+
 from datetime import datetime, timezone
 from uuid import uuid4
-import asyncio
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from app.pipeline.ingest import ingest_log
 from app.pipeline.parser import parse_log
 from app.pipeline.normalizer import normalize_log
 from app.pipeline.router import route_event
+from app.shared.text_tokens import (
+    TOKENIZER_VERSION,
+    build_event_search_text,
+    estimate_token_count,
+)
 from app.shared.db import (
     get_pool, close_pool, init_schema,
     insert_raw_log, insert_normalized_event, insert_event_routing,
@@ -35,8 +43,22 @@ from app.shared.kafka_client import get_kafka_client, close_kafka_client, EventP
 
 logger = logging.getLogger(__name__)
 
+PREVIEW_MAX_BYTES = int(os.getenv("PREVIEW_MAX_BYTES", "524288"))
+PREVIEW_MAX_RECORDS = int(os.getenv("PREVIEW_MAX_RECORDS", "500"))
+PREVIEW_RPM = int(os.getenv("PREVIEW_RPM", "120"))
+_preview_hits: deque[float] = deque()
+
 # FastAPI app
 app = FastAPI(title="Pipeline Service")
+
+_cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:3000")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o.strip() for o in _cors_origins.split(",") if o.strip()],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 class ProcessResult(BaseModel):
@@ -50,6 +72,53 @@ class ProcessResult(BaseModel):
     events_in_review: int
     errors: list
     timestamp: str
+    records_preview: Optional[List[Dict[str, Any]]] = None
+
+
+class ParsePreviewIn(BaseModel):
+    text: str
+    format: Optional[str] = None
+
+
+class ParsePreviewOut(BaseModel):
+    detected_format: str
+    record_count: int
+    records: List[Dict[str, Any]]
+    parse_errors: List[Any]
+    input_char_count: int
+    input_approx_tokens: float
+    tokenizer_version: str
+
+
+def _preview_rate_limit() -> None:
+    now = time.time()
+    while _preview_hits and _preview_hits[0] < now - 60:
+        _preview_hits.popleft()
+    if len(_preview_hits) >= PREVIEW_RPM:
+        raise HTTPException(
+            status_code=429,
+            detail="Preview rate limit exceeded; try again in a minute",
+        )
+    _preview_hits.append(now)
+
+
+def _compact_event_for_preview(ev: Dict[str, Any]) -> Dict[str, Any]:
+    ai = ev.get("ai_normalized") or {}
+    msg = ev.get("message") or ""
+    if len(msg) > 2000:
+        msg = msg[:2000] + "…"
+    out: Dict[str, Any] = {
+        "timestamp": ev.get("timestamp"),
+        "source": ev.get("source"),
+        "event_type": ev.get("event_type"),
+        "severity": ev.get("severity"),
+        "message": msg,
+        "ai_category": ai.get("category"),
+        "confidence": ai.get("confidence"),
+    }
+    if ev.get("line_no") is not None:
+        out["line_no"] = ev.get("line_no")
+    return out
 
 
 async def process_log_file(file_data: bytes, file_name: str, file_format: Optional[str] = None) -> ProcessResult:
@@ -179,6 +248,12 @@ async def process_log_file(file_data: bytes, file_name: str, file_format: Option
             for event in normalized_events:
                 try:
                     ai = event.get("ai_normalized", {})
+                    st = build_event_search_text(
+                        event.get("source", "unknown"),
+                        event.get("event_type", "unknown"),
+                        event.get("message", ""),
+                        str(ai.get("category", "") or ""),
+                    )
                     await insert_normalized_event(
                         job_id=job_id,                                      # use pipeline's job_id
                         timestamp=now,
@@ -191,7 +266,8 @@ async def process_log_file(file_data: bytes, file_name: str, file_format: Option
                         ai_recommended_action=ai.get("recommended_action", ""),
                         confidence_score=float(ai.get("confidence", 0.0)),
                         requires_review=event.get("requires_review", False),
-                        review_reason=event.get("review_reason") or ""
+                        review_reason=event.get("review_reason") or "",
+                        search_text=st or None,
                     )
                 except Exception as e:
                     logger.warning(f"Failed to insert event: {e}")
@@ -225,6 +301,12 @@ async def process_log_file(file_data: bytes, file_name: str, file_format: Option
         # SUCCESS
         status = "partial_success" if errors else "success"
         logger.info(f"Pipeline COMPLETE: job_id={job_id}, status={status}")
+
+        preview_cap = int(os.getenv("PROCESS_RECORDS_PREVIEW_MAX", "25"))
+        records_preview = [
+            _compact_event_for_preview(e)
+            for e in normalized_events[:preview_cap]
+        ]
         
         return ProcessResult(
             job_id=job_id,
@@ -235,7 +317,8 @@ async def process_log_file(file_data: bytes, file_name: str, file_format: Option
             events_routed=routed_counts,
             events_in_review=len(review_queue_items),
             errors=errors,
-            timestamp=datetime.now(timezone.utc).isoformat()
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            records_preview=records_preview,
         )
         
     except Exception as e:
@@ -249,8 +332,35 @@ async def process_log_file(file_data: bytes, file_name: str, file_format: Option
             events_routed={},
             events_in_review=0,
             errors=errors + [str(e)],
-            timestamp=datetime.now(timezone.utc).isoformat()
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            records_preview=None,
         )
+
+
+@app.post("/preview", response_model=ParsePreviewOut)
+async def parse_preview(body: ParsePreviewIn):
+    """
+    Parse-only: no MinIO, Kafka, or normalization. Rate-limited; size-capped.
+    """
+    _preview_rate_limit()
+    raw = body.text or ""
+    data = raw.encode("utf-8")
+    if len(data) > PREVIEW_MAX_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Preview body exceeds limit ({PREVIEW_MAX_BYTES} bytes)",
+        )
+    out = parse_log(data, body.format or "")
+    recs = out["records"][:PREVIEW_MAX_RECORDS]
+    return ParsePreviewOut(
+        detected_format=out["detected_format"],
+        record_count=len(out["records"]),
+        records=recs,
+        parse_errors=out["parse_errors"],
+        input_char_count=len(raw),
+        input_approx_tokens=estimate_token_count(raw),
+        tokenizer_version=TOKENIZER_VERSION,
+    )
 
 
 @app.post("/process", response_model=ProcessResult)

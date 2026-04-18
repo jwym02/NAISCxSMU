@@ -1,0 +1,16 @@
+[
+  {
+    "timestamp": "2024-04-17T10:30:00Z",
+    "source": "machine_001",
+    "event_type": "temperature_warning",
+    "severity": "WARNING",
+    "message": "Temperature exceeded 85C threshold"
+  },
+  {
+    "timestamp": "2024-04-17T10:31:00Z",
+    "source": "machine_001",
+    "event_type": "idle",
+    "severity": "INFO",
+    "message": "Chamber idle"
+  }
+]

@@ -1,13 +1,11 @@
 # app/query/__init__.py
-# Exposes the NL2SQL query function.
-# The pipeline never imports from here —
-# this module is only used by app-query's own routes.
-#
-# Usage:
-#   from app.query import run_nl_query
+# Exposes the NL2SQL query service.
 
-from app.query.routes import run_nl_query
+from app.query.main import app, generate_sql, execute_query, query
 
 __all__ = [
-    "run_nl_query",  # Accepts natural language string, returns query result
+    "app",           # FastAPI application instance
+    "generate_sql",  # Convert natural language to SQL
+    "execute_query", # Execute SQL and return results
+    "query",         # Main query endpoint (POST /query)
 ]

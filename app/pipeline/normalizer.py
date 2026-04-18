@@ -166,7 +166,6 @@ def call_ai(record: dict) -> dict:
             json={
                 "model": AI_MODEL,
                 "messages": [{"role": "user", "content": prompt}],
-                "response_format": {"type": "json_object"}
             },
             timeout=15.0
         )

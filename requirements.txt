@@ -11,8 +11,9 @@ asyncpg==0.29.0
 sqlalchemy[asyncio]==2.0.30
 psycopg2-binary==2.9.9
 
-# Kafka
-confluent-kafka==2.4.0
+# Kafka (async producer)
+kafka-python==2.0.2
+aiokafka==0.10.0
 
 # Redis
 redis==5.0.4

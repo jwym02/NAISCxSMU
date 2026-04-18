@@ -31,6 +31,7 @@ from app.shared.db import (
     insert_raw_log, insert_normalized_event, insert_event_routing,
     insert_review_queue_item
 )
+from app.shared.kafka_client import get_kafka_client, close_kafka_client, EventPriority
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +127,7 @@ async def process_log_file(file_data: bytes, file_name: str, file_format: Option
             
             for event in normalized_events:
                 route_result = route_event(event, job_id)
-                routing_results.append(route_result)
+                routing_results.append((event, route_result))  # Store event with routing result
                 
                 topic = route_result.get("topic")
                 if topic:
@@ -141,6 +142,33 @@ async def process_log_file(file_data: bytes, file_name: str, file_format: Option
             logger.error(f"Routing failed: {e}")
             errors.append(f"Routing error: {str(e)}")
             raise
+        
+        # STEP 4.5: SEND TO KAFKA
+        # Send routed events to appropriate Kafka topics
+        try:
+            kafka_client = await get_kafka_client()
+            kafka_sent_count = 0
+            
+            for event, route_result in routing_results:
+                topic = route_result.get("topic")
+                
+                if not topic:
+                    continue  # Review queue items or failed routing
+                
+                try:
+                    # Map topic string to EventPriority enum
+                    priority = EventPriority(topic)
+                    source = event.get("source", "unknown")
+                    await kafka_client.send_event(priority, event, key=source)
+                    kafka_sent_count += 1
+                except (ValueError, Exception) as e:
+                    logger.warning(f"Failed to send event to Kafka topic {topic}: {e}")
+            
+            logger.info(f"Kafka: Sent {kafka_sent_count} events to topics")
+            
+        except Exception as e:
+            logger.warning(f"Kafka send failed (non-critical): {e}")
+            # Don't raise - Kafka unavailability shouldn't block the pipeline
         
         # STEP 5: PERSIST
         # Save to TimescaleDB for analytics and review
@@ -297,7 +325,8 @@ async def startup():
 async def shutdown():
     """Cleanup on shutdown."""
     await close_pool()
-    logger.info("Database pool closed")
+    await close_kafka_client()
+    logger.info("Database pool and Kafka client closed")
 
 
 # Register startup/shutdown events

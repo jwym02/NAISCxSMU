@@ -13,29 +13,52 @@ The backend runs as three separate services, each on its own port.
 
 ### 1. Pipeline API — `http://localhost:8080`
 
-Handles log file ingestion, job tracking, and the human review queue.
+Handles log file ingestion, parsing, normalization, and persistence to database.
 
-| Method | Endpoint             | What it does                              |
-| ------ | -------------------- | ----------------------------------------- |
-| `POST` | `/logs/upload`       | Upload a raw log file for processing      |
-| `GET`  | `/jobs/{id}`         | Poll the status of a submitted job        |
-| `GET`  | `/queue`             | Fetch all items in the human review queue |
-| `POST` | `/queue/{id}/review` | Submit a correction for a review item     |
-| `GET`  | `/health`            | Liveness check                            |
+| Method | Endpoint   | What it does                                         |
+| ------ | ---------- | ---------------------------------------------------- |
+| `POST` | `/process` | Upload a log file for processing (JSON/CSV/XML/LOG) |
+| `GET`  | `/health`  | Liveness check                                       |
 
 Full interactive docs (Swagger UI): **http://localhost:8080/docs**
+
+**Example request:**
+
+```bash
+curl -X POST "http://localhost:8080/process" \
+  -F "file=@logfile.json"
+```
+
+**Example response:**
+
+```json
+{
+  "job_id": "59fce81a-9a58-488e-91f9-ebeeab1ac191",
+  "file_name": "logfile.json",
+  "file_format": "json",
+  "status": "success",
+  "events_processed": 42,
+  "events_routed": {
+    "logs.p0": 2,
+    "logs.p1": 8,
+    "logs.p2": 32
+  },
+  "events_in_review": 3,
+  "errors": []
+}
+```
 
 ---
 
 ### 2. Query API — `http://localhost:8081`
 
-Accepts natural language questions and returns structured data
-for chart or table rendering.
+Accepts natural language questions and returns structured data from TimescaleDB.
 
-| Method | Endpoint  | What it does                                             |
-| ------ | --------- | -------------------------------------------------------- |
-| `POST` | `/query`  | Send a natural language question, get back query results |
-| `GET`  | `/health` | Liveness check                                           |
+| Method | Endpoint  | What it does                                                  |
+| ------ | --------- | ------------------------------------------------------------- |
+| `POST` | `/query`  | Send a natural language question, get back SQL + query results |
+| `GET`  | `/health` | Liveness check                                                |
+| `GET`  | `/schema` | Return database schema documentation                          |
 
 Full interactive docs (Swagger UI): **http://localhost:8081/docs**
 
@@ -44,7 +67,9 @@ Full interactive docs (Swagger UI): **http://localhost:8081/docs**
 ```json
 POST /query
 {
-  "question": "Show me all critical errors from tool MCH_0001 in the last 24 hours"
+  "query": "Show me all critical errors from the last 24 hours",
+  "limit": 100,
+  "time_range_hours": 24
 }
 ```
 
@@ -52,9 +77,25 @@ POST /query
 
 ```json
 {
-  "sql": "SELECT * FROM log_events WHERE ...",
-  "columns": ["event_time", "tool_id", "severity", "fault_code"],
-  "rows": [...]
+  "original_query": "Show me all critical errors from the last 24 hours",
+  "generated_sql": "SELECT * FROM normalized_events WHERE timestamp > NOW() - INTERVAL '24 hours' ORDER BY timestamp DESC LIMIT 100",
+  "rows": [
+    {
+      "job_id": "59fce81a-9a58-488e-91f9-ebeeab1ac191",
+      "timestamp": "2026-04-18T05:52:09.267Z",
+      "source": "machine_001",
+      "event_type": "temperature_warning",
+      "severity": "warning",
+      "message": "Temperature exceeded 85C threshold",
+      "ai_category": "thermal",
+      "ai_root_cause": "Cooling system failure",
+      "ai_recommended_action": "Inspect cooling system",
+      "confidence_score": 0.92,
+      "requires_review": false
+    }
+  ],
+  "row_count": 1,
+  "execution_time_ms": 45.23
 }
 ```
 
@@ -62,37 +103,7 @@ POST /query
 
 ### 3. WebSocket alerts — `ws://localhost:8083/ws/alerts`
 
-Real-time stream of P0 (critical) and P1 (standard error) events.
-Connect once on page load and listen for incoming messages.
-
-**Example message payload:**
-
-```json
-{
-  "priority": "P0",
-  "tool_id": "MCH_0001",
-  "severity": "CRITICAL",
-  "fault_code": "VACUUM_FAULT",
-  "event_time": "2025-04-14T12:03:20Z",
-  "message": "Vacuum fault detected on chamber C1"
-}
-```
-
-**Connecting in JavaScript:**
-
-```javascript
-const ws = new WebSocket("ws://localhost:8083/ws/alerts");
-
-ws.onmessage = (event) => {
-  const alert = JSON.parse(event.data);
-  console.log("New alert:", alert);
-  // render to your alerts dashboard
-};
-
-ws.onclose = () => {
-  // implement reconnect logic here
-};
-```
+**⚠️ Not yet implemented.** Placeholder for future real-time P0/P1 event streaming.
 
 ---
 
@@ -101,12 +112,15 @@ ws.onclose = () => {
 Based on the system's capabilities, these are the pages
 the frontend should cover:
 
-| Page             | Data source  | Key interactions                                      |
-| ---------------- | ------------ | ----------------------------------------------------- |
-| **Upload**       | Pipeline API | Drag/drop log file, show job progress, display result |
-| **Live alerts**  | WebSocket    | Real-time feed of P0/P1 events with severity badges   |
-| **Review queue** | Pipeline API | List low-confidence events, approve or correct them   |
-| **Analytics**    | Query API    | Free-text query input, render results as chart/table  |
+| Page          | Data source  | Key interactions                                        |
+| ------------- | ------------ | ------------------------------------------------------- |
+| **Upload**    | Pipeline API | Drag/drop or select log file, display processing result |
+| **Analytics** | Query API    | Free-text query input, render results as table          |
+| **Schema**    | Query API    | Browse database tables and columns (from `/schema`)     |
+
+**Note:** Job tracking, live alerts, and review queue features are
+architectural placeholders. The core pipeline processes logs end-to-end
+but does not yet expose intermediate job status or webhook callbacks.
 
 ---
 
@@ -117,19 +131,14 @@ uncomment the `frontend` service block in `docker-compose.yml`
 and update the `build`, `ports`, and environment variables
 to match your framework's dev server setup.
 
-The three environment variables to set are:
+The environment variables to set are:
 
 ```
-PIPELINE_API_URL = http://localhost:8080
-QUERY_API_URL    = http://localhost:8081
-WS_ALERTS_URL    = ws://localhost:8083/ws/alerts
+REACT_APP_PIPELINE_URL=http://localhost:8080      # or VITE_PIPELINE_URL, NEXT_PUBLIC_PIPELINE_URL
+REACT_APP_QUERY_URL=http://localhost:8081         # or VITE_QUERY_URL, NEXT_PUBLIC_QUERY_URL
 ```
 
-If your framework uses a different prefix convention
-(e.g. `NEXT_PUBLIC_`, `VITE_`, `REACT_APP_`), rename them
-accordingly — just make sure the values point to the same ports.
-
----
+(Adjust variable prefixes based on your framework: `NEXT_PUBLIC_`, `VITE_`, `REACT_APP_`, etc.)
 
 ## CORS
 

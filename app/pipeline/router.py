@@ -47,30 +47,11 @@ def determine_topic(normalized_record: dict) -> str | None:
     return TOPIC_P2
 
 
-def produce_to_kafka(topic: str, message: dict):
-    """
-    Produce a message to a Kafka topic.
-    Fails gracefully if kafka_client is not yet implemented.
-    """
-    try:
-        from app.shared.kafka_client import kafka_producer
-        kafka_producer.produce(
-            topic,
-            key=(message.get("job_id") or "").encode("utf-8"),
-            value=json.dumps(message, default=str).encode("utf-8")
-        )
-        kafka_producer.flush()
-        logging.info(f"Produced to {topic}: job_id={message.get('job_id')}")
-    except ImportError:
-        logging.warning("kafka_client not yet implemented — skipping Kafka produce")
-    except Exception as e:
-        logging.error(f"Failed to produce to Kafka topic '{topic}': {e}")
-        raise
-
-
 def route_event(normalized_record: dict, job_id: str = "") -> dict:
     """
-    Classify a single normalized record and produce it to the correct Kafka topic.
+    Classify a single normalized record and return its routing decision.
+    Does NOT produce to Kafka — main.py step 4.5 handles the actual send
+    using get_kafka_client() so it can be properly awaited in async context.
 
     Args:
         normalized_record: One record from normalize_log()["normalized_records"]
@@ -79,13 +60,12 @@ def route_event(normalized_record: dict, job_id: str = "") -> dict:
     Returns:
         {
             "topic":  "logs.p0" | "logs.p1" | "logs.p2" | "logs.deadletter" | None,
-            "status": "routed" | "review" | "failed",
-            "reason": "..."   (only present when status != "routed")
+            "status": "routed" | "review",
+            "reason": "..."   (only present when status == "review")
         }
     """
     topic = determine_topic(normalized_record)
 
-    # Goes to human review queue — not Kafka
     if topic is None:
         return {
             "topic":  None,
@@ -93,16 +73,4 @@ def route_event(normalized_record: dict, job_id: str = "") -> dict:
             "reason": normalized_record.get("review_reason") or "Low confidence"
         }
 
-    message = {"job_id": job_id, **normalized_record}
-
-    try:
-        produce_to_kafka(topic, message)
-        return {"topic": topic, "status": "routed"}
-    except Exception as e:
-        logging.error(f"Routing failed for topic '{topic}', falling back to dead letter: {e}")
-        # Best-effort fallback to dead letter
-        try:
-            produce_to_kafka(TOPIC_DEADLETTER, message)
-        except Exception:
-            pass
-        return {"topic": TOPIC_DEADLETTER, "status": "failed", "error": str(e)}
+    return {"topic": topic, "status": "routed"}

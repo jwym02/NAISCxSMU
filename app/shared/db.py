@@ -12,6 +12,7 @@ Architecture:
 """
 
 import os
+import json
 import asyncio
 import logging
 from typing import Optional, List, Dict, Any
@@ -25,11 +26,15 @@ TIMESCALE_DB = os.getenv("TIMESCALE_DB", "logparser_db")
 TIMESCALE_USER = os.getenv("TIMESCALE_USER", "logparser")
 TIMESCALE_PASSWORD = os.getenv("TIMESCALE_PASSWORD", "logparser_secret")
 TIMESCALE_POOL_SIZE = int(os.getenv("TIMESCALE_POOL_SIZE", 5))
+# Optional read-only user for query/search paths (create in Postgres with SELECT-only grants).
+TIMESCALE_QUERY_USER = os.getenv("TIMESCALE_QUERY_USER", "").strip() or None
+TIMESCALE_QUERY_PASSWORD = os.getenv("TIMESCALE_QUERY_PASSWORD", TIMESCALE_PASSWORD)
 
 logger = logging.getLogger(__name__)
 
 # Global connection pool
 _pool: Optional[asyncpg.Pool] = None
+_query_pool: Optional[asyncpg.Pool] = None
 
 
 async def get_pool() -> asyncpg.Pool:
@@ -52,11 +57,38 @@ async def get_pool() -> asyncpg.Pool:
 
 async def close_pool():
     """Close the database connection pool."""
-    global _pool
+    global _pool, _query_pool
     if _pool:
         await _pool.close()
         _pool = None
         logger.info("Closed database pool")
+    if _query_pool:
+        await _query_pool.close()
+        _query_pool = None
+        logger.info("Closed query database pool")
+
+
+async def get_query_pool() -> asyncpg.Pool:
+    """
+    Pool for NL query execution and keyword search.
+    Uses TIMESCALE_QUERY_USER when set (read-only); otherwise the primary pool.
+    """
+    global _query_pool
+    if not TIMESCALE_QUERY_USER:
+        return await get_pool()
+    if _query_pool is None:
+        _query_pool = await asyncpg.create_pool(
+            host=TIMESCALE_HOST,
+            port=TIMESCALE_PORT,
+            database=TIMESCALE_DB,
+            user=TIMESCALE_QUERY_USER,
+            password=TIMESCALE_QUERY_PASSWORD,
+            min_size=1,
+            max_size=max(2, TIMESCALE_POOL_SIZE),
+            command_timeout=60,
+        )
+        logger.info("Created read-only query pool user=%s", TIMESCALE_QUERY_USER)
+    return _query_pool
 
 
 async def init_schema():
@@ -205,8 +237,160 @@ async def init_schema():
         """)
         logger.info("Created continuous aggregate: events_by_machine_daily")
 
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS processing_jobs (
+                job_id UUID PRIMARY KEY,
+                status TEXT NOT NULL,
+                file_name TEXT,
+                file_format_hint TEXT,
+                progress_step TEXT,
+                progress_pct INT DEFAULT 0,
+                result JSONB,
+                error TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+        """)
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_processing_jobs_status ON processing_jobs (status)"
+        )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_processing_jobs_created ON processing_jobs (created_at DESC)"
+        )
+        logger.info("Created processing_jobs table")
+
 
 # ── Write Operations ──────────────────────────────────────────────
+
+
+async def insert_processing_job(
+    job_id: str,
+    file_name: str,
+    file_format_hint: Optional[str],
+    status: str = "queued",
+) -> None:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO processing_jobs (job_id, status, file_name, file_format_hint)
+            VALUES ($1, $2, $3, $4)
+            """,
+            job_id,
+            status,
+            file_name,
+            file_format_hint,
+        )
+
+
+async def mark_processing_job_running(job_id: str, step: str = "ingest", pct: int = 5) -> None:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE processing_jobs
+            SET status = 'processing', progress_step = $2, progress_pct = $3, updated_at = NOW()
+            WHERE job_id = $1
+            """,
+            job_id,
+            step,
+            pct,
+        )
+
+
+async def finalize_processing_job(
+    job_id: str,
+    *,
+    status: str,
+    result: Optional[Dict[str, Any]] = None,
+    error: Optional[str] = None,
+) -> None:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        if result is not None:
+            await conn.execute(
+                """
+                UPDATE processing_jobs
+                SET status = $2,
+                    result = $3::jsonb,
+                    error = $4,
+                    progress_step = 'done',
+                    progress_pct = 100,
+                    updated_at = NOW()
+                WHERE job_id = $1
+                """,
+                job_id,
+                status,
+                json.dumps(result),
+                error,
+            )
+        else:
+            await conn.execute(
+                """
+                UPDATE processing_jobs
+                SET status = $2,
+                    result = NULL,
+                    error = $3,
+                    progress_step = 'done',
+                    progress_pct = 100,
+                    updated_at = NOW()
+                WHERE job_id = $1
+                """,
+                job_id,
+                status,
+                error,
+            )
+
+
+async def get_processing_job(job_id: str) -> Optional[Dict[str, Any]]:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT job_id, status, file_name, file_format_hint,
+                   progress_step, progress_pct, result, error,
+                   created_at, updated_at
+            FROM processing_jobs WHERE job_id = $1
+            """,
+            job_id,
+        )
+    if not row:
+        return None
+    d = dict(row)
+    if d.get("result") and isinstance(d["result"], str):
+        d["result"] = json.loads(d["result"])
+    return d
+
+
+async def search_normalized_events_fts(
+    query: str, limit: int = 50
+) -> List[Dict[str, Any]]:
+    """Keyword search using search_text + GIN (to_tsvector simple)."""
+    pool = await get_query_pool()
+    q = (query or "").strip()
+    if not q:
+        return []
+    lim = max(1, min(limit, 500))
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT job_id, timestamp, source, event_type, severity, message,
+                   ai_category, confidence_score, requires_review
+            FROM normalized_events
+            WHERE to_tsvector('simple', COALESCE(search_text, ''))
+                  @@ plainto_tsquery('simple', $1)
+            ORDER BY timestamp DESC
+            LIMIT $2
+            """,
+            q,
+            lim,
+        )
+    out = [dict(r) for r in rows]
+    for row in out:
+        for k, v in row.items():
+            if isinstance(v, datetime):
+                row[k] = v.isoformat()
+    return out
 
 
 async def insert_raw_log(

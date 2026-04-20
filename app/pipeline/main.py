@@ -13,15 +13,18 @@ Architecture:
 """
 
 import os
+import json
 import logging
 import time
 from collections import deque
 from typing import Any, Dict, List, Optional
 
+import asyncio
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -37,7 +40,11 @@ from app.shared.text_tokens import (
 from app.shared.db import (
     get_pool, close_pool, init_schema,
     insert_raw_log, insert_normalized_event, insert_event_routing,
-    insert_review_queue_item
+    insert_review_queue_item,
+    insert_processing_job,
+    mark_processing_job_running,
+    finalize_processing_job,
+    get_processing_job,
 )
 from app.shared.kafka_client import get_kafka_client, close_kafka_client, EventPriority
 
@@ -78,6 +85,24 @@ class ProcessResult(BaseModel):
 class ParsePreviewIn(BaseModel):
     text: str
     format: Optional[str] = None
+
+
+class JobAccepted(BaseModel):
+    job_id: str
+    status: str
+    message: str
+
+
+class JobStatusResponse(BaseModel):
+    job_id: str
+    status: str
+    file_name: Optional[str] = None
+    file_format_hint: Optional[str] = None
+    progress: Optional[Dict[str, Any]] = None
+    result: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
 
 
 class ParsePreviewOut(BaseModel):
@@ -121,7 +146,43 @@ def _compact_event_for_preview(ev: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-async def process_log_file(file_data: bytes, file_name: str, file_format: Optional[str] = None) -> ProcessResult:
+async def _run_async_pipeline_job(
+    job_id: str,
+    file_data: bytes,
+    file_name: str,
+    file_format: Optional[str],
+) -> None:
+    try:
+        await mark_processing_job_running(job_id, "pipeline", 10)
+        result = await process_log_file(
+            file_data, file_name, file_format, existing_job_id=job_id
+        )
+        ok = result.status in ("success", "partial_success")
+        await finalize_processing_job(
+            job_id,
+            status="completed" if ok else "failed",
+            result=result.model_dump(),
+            error=None
+            if ok
+            else "; ".join(result.errors[-8:] if result.errors else [result.status]),
+        )
+    except Exception as e:
+        logger.exception("Async pipeline job %s failed", job_id)
+        await finalize_processing_job(
+            job_id,
+            status="failed",
+            result=None,
+            error=str(e),
+        )
+
+
+async def process_log_file(
+    file_data: bytes,
+    file_name: str,
+    file_format: Optional[str] = None,
+    *,
+    existing_job_id: Optional[str] = None,
+) -> ProcessResult:
     """
     Execute the complete pipeline for a log file.
     
@@ -133,7 +194,7 @@ async def process_log_file(file_data: bytes, file_name: str, file_format: Option
     Returns:
         ProcessResult with pipeline execution details
     """
-    job_id = str(uuid4())
+    job_id = existing_job_id or str(uuid4())
     start_time = datetime.now(timezone.utc)
     errors = []
     
@@ -363,33 +424,48 @@ async def parse_preview(body: ParsePreviewIn):
     )
 
 
-@app.post("/process", response_model=ProcessResult)
-async def process(file: UploadFile = File(...), format: Optional[str] = None):
+@app.post("/process")
+async def process(
+    file: UploadFile = File(...),
+    format: Optional[str] = None,
+    async_mode: bool = Query(False, alias="async"),
+):
     """
-    Upload and process a log file through the complete pipeline.
-    
-    Args:
-        file: Log file (JSON, CSV, XML, LOG, TXT, etc.)
-        format: Optional format hint
-    
-    Returns:
-        ProcessResult with pipeline execution details
+    Upload and process a log file. Use `?async=true` to queue and poll `GET /jobs/{job_id}`.
     """
     try:
-        # Read file
         file_data = await file.read()
-        
+
         if not file_data:
             raise HTTPException(status_code=400, detail="File is empty")
-        
-        # Process through pipeline
-        result = await process_log_file(file_data, file.filename, format)
-        
-        # Return appropriate status code
-        status_code = 200 if result.status == "success" else (206 if result.status == "partial_success" else 400)
-        
-        return result
-        
+
+        fname = file.filename or "upload.bin"
+
+        if async_mode:
+            job_id = str(uuid4())
+            await insert_processing_job(job_id, fname, format, status="queued")
+            asyncio.create_task(
+                _run_async_pipeline_job(job_id, file_data, fname, format)
+            )
+            return JSONResponse(
+                status_code=202,
+                content=JobAccepted(
+                    job_id=job_id,
+                    status="queued",
+                    message="Processing started; poll GET /jobs/{job_id}",
+                ).model_dump(),
+            )
+
+        result = await process_log_file(file_data, fname, format)
+        status_code = (
+            200
+            if result.status == "success"
+            else (206 if result.status == "partial_success" else 400)
+        )
+        return JSONResponse(
+            status_code=status_code, content=result.model_dump()
+        )
+
     except HTTPException:
         raise
     except Exception as e:
@@ -407,19 +483,51 @@ async def health():
     }
 
 
-@app.get("/status/{job_id}")
-async def status(job_id: str):
-    """
-    Get pipeline execution status for a job.
-    
-    Note: In production, this would query a job status table.
-    For now, we return a placeholder.
-    """
-    return {
-        "job_id": job_id,
-        "status": "Processing status tracking not yet implemented",
-        "note": "Implement job tracking table for persistent status queries"
-    }
+def _job_row_to_response(row: Dict[str, Any]) -> JobStatusResponse:
+    def _iso(v):
+        if v is None:
+            return None
+        if hasattr(v, "isoformat"):
+            return v.isoformat()
+        return str(v)
+
+    prog = None
+    if row.get("progress_step") is not None or row.get("progress_pct") is not None:
+        prog = {
+            "step": row.get("progress_step"),
+            "step_progress": row.get("progress_pct"),
+        }
+    res = row.get("result")
+    if isinstance(res, str):
+        try:
+            res = json.loads(res)
+        except Exception:
+            pass
+    return JobStatusResponse(
+        job_id=str(row["job_id"]),
+        status=row["status"],
+        file_name=row.get("file_name"),
+        file_format_hint=row.get("file_format_hint"),
+        progress=prog,
+        result=res if isinstance(res, dict) else None,
+        error=row.get("error"),
+        created_at=_iso(row.get("created_at")),
+        updated_at=_iso(row.get("updated_at")),
+    )
+
+
+@app.get("/jobs/{job_id}", response_model=JobStatusResponse)
+async def get_job(job_id: str):
+    row = await get_processing_job(job_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return _job_row_to_response(row)
+
+
+@app.get("/status/{job_id}", response_model=JobStatusResponse)
+async def status_legacy(job_id: str):
+    """Alias for GET /jobs/{job_id} (legacy path)."""
+    return await get_job(job_id)
 
 
 async def startup():

@@ -15,12 +15,17 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta, timezone
 import httpx
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from app.query.sql_validate import validate_generated_sql
-from app.shared.db import get_pool, close_pool
+from app.shared.db import (
+    close_pool,
+    init_schema,
+    get_query_pool,
+    search_normalized_events_fts,
+)
 from app.shared.text_tokens import (
     MAX_USER_PROMPT_CHARS,
     normalize_prompt,
@@ -62,6 +67,14 @@ class QueryResponse(BaseModel):
     rows: List[Dict[str, Any]]
     row_count: int
     execution_time_ms: float
+
+
+class KeywordSearchResponse(BaseModel):
+    """Full-text style search over normalized_events.search_text (GIN)."""
+
+    q: str
+    row_count: int
+    rows: List[Dict[str, Any]]
 
 
 # Database schema documentation for LLM context
@@ -151,6 +164,13 @@ DATABASE_SCHEMA = """
    WHERE ai_category = 'thermal' AND severity IN ('CRITICAL', 'ERROR')
    AND timestamp > NOW() - INTERVAL '24 hours'
    ORDER BY timestamp DESC;
+
+5. Keyword search (same as GET /search?q=... — uses search_text + GIN):
+   SELECT job_id, timestamp, source, event_type, severity, message, ai_category
+   FROM normalized_events
+   WHERE to_tsvector('simple', COALESCE(search_text, '')) @@ plainto_tsquery('simple', 'vacuum')
+   ORDER BY timestamp DESC
+   LIMIT 50;
 """
 
 
@@ -275,7 +295,7 @@ async def execute_query(sql_query: str) -> List[Dict[str, Any]]:
     """
     try:
         logger.info(f"Executing SQL: {sql_query}")
-        pool = await get_pool()
+        pool = await get_query_pool()
         async with pool.acquire() as conn:
             rows = await conn.fetch(sql_query)
             
@@ -345,6 +365,19 @@ async def query(request: QueryRequest):
     )
 
 
+@app.get("/search", response_model=KeywordSearchResponse)
+async def keyword_search(
+    q: str = Query(..., min_length=1, description="Keywords (plainto_tsquery)"),
+    limit: int = Query(50, ge=1, le=500),
+):
+    """
+    Search stored events via `search_text` and the GIN index on
+    to_tsvector('simple', search_text). Complements NL /query.
+    """
+    rows = await search_normalized_events_fts(q, limit)
+    return KeywordSearchResponse(q=q, row_count=len(rows), rows=rows)
+
+
 @app.get("/health")
 async def health():
     """Health check endpoint."""
@@ -365,6 +398,19 @@ async def schema():
             "temperature": NL2SQL_TEMPERATURE
         }
     }
+
+
+@app.on_event("startup")
+async def _query_startup():
+    try:
+        await init_schema()
+    except Exception as e:
+        logger.warning("Query service could not init schema (pipeline may own DB init): %s", e)
+
+
+@app.on_event("shutdown")
+async def _query_shutdown():
+    await close_pool()
 
 
 if __name__ == "__main__":

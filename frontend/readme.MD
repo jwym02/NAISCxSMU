@@ -26,12 +26,18 @@ Documented in **`swagger.yml`** (sync pipeline):
 
 - `POST /process` — multipart field `file`, optional query `format=json|csv|xml|log|txt`; response may include `records_preview` (sample normalized rows)
 - `POST /preview` — JSON `{ "text", "format?" }` — parse-only (no MinIO/Kafka/AI), size- and rate-limited
+- `POST /process?async=true` — returns **202** + `{ job_id, status, message }`; poll **`GET /jobs/{job_id}`** (alias: `GET /status/{job_id}`) until `status` is `completed` or `failed`; `result` holds the same JSON as sync `ProcessResult`
 - `GET /health` — `{ "status": "ok", "service": "pipeline", ... }`
 
 Query service (port 8081):
 
 - `POST /query` — JSON `{ "query", "limit?", "time_range_hours?" }`
+- `GET /search?q=&limit=` — keyword search over **`normalized_events.search_text`** (GIN / `to_tsvector('simple', …)`)
 - `GET /health`, `GET /schema`
+
+Optional **read-only DB user** for query/search only: set `TIMESCALE_QUERY_USER` and `TIMESCALE_QUERY_PASSWORD` in the query container env; create a Postgres role with `SELECT` on allowed tables only. If unset, the query service uses the main DB user.
+
+After **bulk loads**, you may run `REINDEX INDEX CONCURRENTLY idx_normalized_search_text_gin` if the planner stats are stale (usually not required for normal ingest).
 
 Reserved / not implemented on pipeline HTTP service today: `GET /queue`, review queue routes (see swagger notes).
 

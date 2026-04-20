@@ -124,8 +124,10 @@ NOTES:
 """
 
 import os
+import re
 import json
 import logging
+import time
 import uuid
 import httpx
 from app.shared.dynamo import dynamo_client
@@ -133,17 +135,58 @@ from app.shared.dynamo import dynamo_client
 AI_KEY         = os.getenv("AI_KEY")
 AI_MODEL       = os.getenv("AI_MODEL", "nvidia/nemotron-nano-9b-v2")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-RULES_TABLE    = os.getenv("DYNAMODB_TABLE_RULES", "normalization-rules")
+# Per-source vendor rules live in the SOURCE rules table; field aliases live in
+# FIELD rules. Both fall back to the single legacy table for compatibility.
+_LEGACY_RULES  = os.getenv("DYNAMODB_TABLE_RULES", "normalization-rules")
+RULES_TABLE    = os.getenv("DYNAMODB_TABLE_SOURCE_RULES", _LEGACY_RULES)
 REVIEW_TABLE   = os.getenv("DYNAMODB_TABLE_REVIEW", "human-review-queue")
 CONFIDENCE_THRESHOLD = float(os.getenv("NORMALIZE_CONFIDENCE_THRESHOLD", "0.85"))
+REVIEW_TTL_HOURS     = int(os.getenv("REVIEW_QUEUE_TTL_HOURS", "48"))
+SOURCE_RULE_CACHE_TTL = int(os.getenv("SOURCE_RULE_CACHE_TTL", "300"))
+
+_source_rule_cache: dict[str, tuple[float, dict | None]] = {}
+
+# PII scrub patterns applied to message text before sending to the LLM.
+_PII_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+"), "[EMAIL]"),
+    (re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"), "[IP]"),
+    (re.compile(r"\b(?:\d[ -]?){13,19}\b"), "[CARD]"),
+    (re.compile(r"\+?\d[\d\s().-]{8,}\d"), "[PHONE]"),
+    (re.compile(r"\b[A-Fa-f0-9]{32,}\b"), "[HEX]"),
+    (re.compile(
+        r"(?i)(authorization|api[-_ ]?key|token|secret|password)"
+        r"\s*[:=]\s*(?:bearer\s+|basic\s+)?\S+"
+    ), r"\1=[REDACTED]"),
+]
+
+
+def scrub_pii(text: str) -> str:
+    """Mask common PII / secrets before sending text to an external LLM."""
+    if not text:
+        return text
+    out = text
+    for pat, repl in _PII_PATTERNS:
+        out = pat.sub(repl, out)
+    return out
+
+
+def _extract_json_blob(content: str) -> str:
+    """Strip markdown code fences some models wrap JSON in."""
+    s = content.strip()
+    if s.startswith("```"):
+        s = re.sub(r"^```(?:json)?\s*", "", s)
+        s = re.sub(r"\s*```$", "", s)
+    return s
 
 def call_ai(record: dict) -> dict:
+    safe_message = scrub_pii(record.get("message", "") or "")[:4000]
+
     prompt = f"""You are analyzing a manufacturing machine log event.
 
     Machine: {record.get('source', 'unknown')}
     Event Type: {record.get('event_type', 'unknown')}
     Severity: {record.get('severity', 'unknown')}
-    Message: {record.get('message', '')}
+    Message: {safe_message}
 
     You MUST respond with ONLY a valid JSON object. No explanation, no markdown, no code blocks.
     Use exactly these keys:
@@ -155,6 +198,11 @@ def call_ai(record: dict) -> dict:
     }}
 
     For confidence: use 0.9+ if very clear, 0.7-0.9 if fairly clear, 0.5-0.7 if uncertain, <0.5 if very unclear."""
+
+    if not AI_KEY:
+        # No key configured → degrade gracefully; rules can still drive output.
+        return {"category": "unknown", "root_cause": "unknown",
+                "recommended_action": "manual review", "confidence": 0.0}
 
     try:
         response = httpx.post(
@@ -171,15 +219,16 @@ def call_ai(record: dict) -> dict:
         )
         response.raise_for_status()
         content = response.json()["choices"][0]["message"]["content"]
-        result = json.loads(content)
-        
-        # Ensure confidence is a valid float between 0 and 1
+        result = json.loads(_extract_json_blob(content))
+
         if "confidence" in result:
-            result["confidence"] = float(result["confidence"])
-            result["confidence"] = max(0.0, min(1.0, result["confidence"]))
+            try:
+                result["confidence"] = max(0.0, min(1.0, float(result["confidence"])))
+            except (TypeError, ValueError):
+                result["confidence"] = 0.5
         else:
-            result["confidence"] = 0.5  # Default mid-range confidence if not provided
-        
+            result["confidence"] = 0.5
+
         return result
     except Exception as e:
         logging.warning(f"AI call failed: {e}")
@@ -188,6 +237,13 @@ def call_ai(record: dict) -> dict:
 
 def lookup_rule(record: dict) -> dict | None:
     source = record.get("source", "unknown")
+    now = time.time()
+
+    cached = _source_rule_cache.get(source)
+    if cached and (now - cached[0]) < SOURCE_RULE_CACHE_TTL:
+        return cached[1]
+
+    result: dict | None = None
     try:
         response = dynamo_client.query(
             TableName=RULES_TABLE,
@@ -196,16 +252,38 @@ def lookup_rule(record: dict) -> dict | None:
         )
         items = response.get("Items", [])
         if items:
-            # Return first matching rule (most specific)
             item = items[0]
-            return {
+            result = {
                 "category":           item.get("category",           {}).get("S"),
                 "recommended_action": item.get("recommended_action", {}).get("S"),
                 "min_confidence":     float(item.get("min_confidence", {}).get("N", 0))
             }
     except Exception as e:
         logging.warning(f"DynamoDB rule lookup failed for '{source}': {e}")
-    return None
+
+    _source_rule_cache[source] = (now, result)
+    return result
+
+
+def _persist_review_items(items: list[dict]) -> None:
+    """Best-effort DynamoDB write for low-confidence items; silent on failure."""
+    if not items or not REVIEW_TABLE:
+        return
+    ttl = int(time.time()) + REVIEW_TTL_HOURS * 3600
+    for it in items:
+        try:
+            dynamo_client.put_item(
+                TableName=REVIEW_TABLE,
+                Item={
+                    "id":            {"S": it["id"]},
+                    "confidence":    {"N": str(it.get("confidence", 0.0))},
+                    "review_reason": {"S": it.get("review_reason") or ""},
+                    "payload":       {"S": json.dumps(it, default=str)[:300_000]},
+                    "ttl":           {"N": str(ttl)},
+                },
+            )
+        except Exception as e:
+            logging.warning(f"Review queue DynamoDB put failed: {e}")
 
 def combine_and_score(record: dict, ai_result: dict, rule: dict | None):
     confidence = float(ai_result.get("confidence", 0.0))
@@ -266,6 +344,8 @@ def normalize_log(parsed_records: list) -> dict:
                 "confidence":      confidence,
                 "review_reason":   review_reason or "Low confidence in categorization"
             })
+
+    _persist_review_items(review_queue_items)
 
     return {
         "normalized_records":  normalized_records,

@@ -40,3 +40,30 @@ export type QueryResponse = {
   row_count: number;
   execution_time_ms: number;
 };
+
+export type JobAccepted = {
+  job_id: string;
+  status: string;
+  message: string;
+};
+
+export type JobStatus = {
+  job_id: string;
+  status: string;
+  file_name?: string | null;
+  file_format_hint?: string | null;
+  progress?: {
+    step?: string | null;
+    step_progress?: number | null;
+  } | null;
+  result?: ProcessResult | null;
+  error?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type KeywordSearchResponse = {
+  q: string;
+  row_count: number;
+  rows: Record<string, unknown>[];
+};

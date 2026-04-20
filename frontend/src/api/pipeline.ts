@@ -1,6 +1,9 @@
 import { apiFetch } from "./client";
 import type {
   HealthResponse,
+  JobAccepted,
+  JobStatus,
+  KeywordSearchResponse,
   ParsePreviewOut,
   ProcessResult,
   QueryRequest,
@@ -23,6 +26,19 @@ export async function getQueryHealth(): Promise<HealthResponse> {
   const r = await apiFetch(`${queryBase()}/health`);
   if (!r.ok) throw new Error(`Query health: ${r.status}`);
   return r.json() as Promise<HealthResponse>;
+}
+
+export async function getJobStatus(jobId: string): Promise<JobStatus> {
+  const r = await apiFetch(`${pipelineBase()}/jobs/${encodeURIComponent(jobId)}`);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const detail =
+      typeof data === "object" && data && "detail" in data
+        ? String((data as { detail: unknown }).detail)
+        : r.statusText;
+    throw new Error(detail || `Job status failed: ${r.status}`);
+  }
+  return data as JobStatus;
 }
 
 export async function parsePreview(
@@ -50,17 +66,24 @@ export async function parsePreview(
 
 export async function processLogFile(
   file: File,
-  formatHint?: string
-): Promise<ProcessResult> {
+  formatHint?: string,
+  options?: { async?: boolean }
+): Promise<ProcessResult | JobAccepted> {
   const fd = new FormData();
   fd.append("file", file);
-  const q = formatHint ? `?format=${encodeURIComponent(formatHint)}` : "";
-  const r = await apiFetch(`${pipelineBase()}/process${q}`, {
+  const params = new URLSearchParams();
+  if (formatHint) params.set("format", formatHint);
+  if (options?.async) params.set("async", "true");
+  const qs = params.toString();
+  const r = await apiFetch(`${pipelineBase()}/process${qs ? `?${qs}` : ""}`, {
     method: "POST",
     body: fd,
   });
 
   const data = await r.json().catch(() => ({}));
+  if (r.status === 202) {
+    return data as JobAccepted;
+  }
   if (!r.ok) {
     if (
       typeof data === "object" &&
@@ -99,4 +122,21 @@ export async function runNlQuery(body: QueryRequest): Promise<QueryResponse> {
     throw new Error(detail || `Query failed: ${r.status}`);
   }
   return data as QueryResponse;
+}
+
+export async function keywordSearch(
+  q: string,
+  limit = 50
+): Promise<KeywordSearchResponse> {
+  const params = new URLSearchParams({ q, limit: String(limit) });
+  const r = await apiFetch(`${queryBase()}/search?${params}`);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const detail =
+      typeof data === "object" && data && "detail" in data
+        ? String((data as { detail: unknown }).detail)
+        : r.statusText;
+    throw new Error(detail || `Search failed: ${r.status}`);
+  }
+  return data as KeywordSearchResponse;
 }

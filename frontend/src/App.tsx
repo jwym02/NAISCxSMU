@@ -1,12 +1,20 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  getJobStatus,
   getPipelineHealth,
   getQueryHealth,
+  keywordSearch,
   parsePreview,
   processLogFile,
   runNlQuery,
 } from "./api/pipeline";
-import type { ParsePreviewOut, ProcessResult, QueryResponse } from "./api/types";
+import type {
+  JobAccepted,
+  KeywordSearchResponse,
+  ParsePreviewOut,
+  ProcessResult,
+  QueryResponse,
+} from "./api/types";
 import { estimateApproxTokens } from "./lib/estimateTokens";
 import { optimizeLogText } from "./lib/optimizeText";
 import "./App.css";
@@ -54,6 +62,14 @@ export default function App() {
   const [qBusy, setQBusy] = useState(false);
   const [qErr, setQErr] = useState<string | null>(null);
   const [qRes, setQRes] = useState<QueryResponse | null>(null);
+  const [asyncMode, setAsyncMode] = useState(false);
+  const [jobPollingId, setJobPollingId] = useState<string | null>(null);
+  const [jobStatusLine, setJobStatusLine] = useState<string | null>(null);
+
+  const [kw, setKw] = useState("temperature");
+  const [kwBusy, setKwBusy] = useState(false);
+  const [kwErr, setKwErr] = useState<string | null>(null);
+  const [kwRes, setKwRes] = useState<KeywordSearchResponse | null>(null);
 
   const refreshHealth = useCallback(async () => {
     setHealthErr(null);
@@ -74,6 +90,35 @@ export default function App() {
   useEffect(() => {
     void refreshHealth();
   }, [refreshHealth]);
+
+  useEffect(() => {
+    if (!jobPollingId) return;
+    const id = window.setInterval(() => {
+      void (async () => {
+        try {
+          const j = await getJobStatus(jobPollingId);
+          setJobStatusLine(`${j.status}${j.progress?.step ? ` · ${j.progress.step}` : ""}`);
+          if (j.status === "completed" || j.status === "failed") {
+            window.clearInterval(id);
+            setJobPollingId(null);
+            setJobStatusLine(null);
+            if (j.result) {
+              setResult(j.result as ProcessResult);
+              setProcError(j.error || null);
+            } else if (j.error) {
+              setProcError(j.error);
+            }
+          }
+        } catch (e) {
+          window.clearInterval(id);
+          setJobPollingId(null);
+          setJobStatusLine(null);
+          setProcError(e instanceof Error ? e.message : String(e));
+        }
+      })();
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [jobPollingId]);
 
   const [filePreview, setFilePreview] = useState("");
 
@@ -165,13 +210,46 @@ export default function App() {
     }
     const hint = formatHint || undefined;
     setBusy(true);
+    setJobStatusLine(null);
     try {
-      const res = await processLogFile(upload, hint);
-      setResult(res);
+      const res = await processLogFile(upload, hint, { async: asyncMode });
+      if (
+        asyncMode &&
+        res &&
+        typeof res === "object" &&
+        "job_id" in res &&
+        "message" in res &&
+        !("events_processed" in res)
+      ) {
+        const ja = res as JobAccepted;
+        setJobPollingId(ja.job_id);
+        setJobStatusLine("queued");
+        setResult(null);
+      } else {
+        setResult(res as ProcessResult);
+      }
     } catch (e) {
       setProcError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const submitKeywordSearch = async () => {
+    setKwErr(null);
+    setKwRes(null);
+    if (!kw.trim()) {
+      setKwErr("Enter keywords.");
+      return;
+    }
+    setKwBusy(true);
+    try {
+      const res = await keywordSearch(kw, 50);
+      setKwRes(res);
+    } catch (e) {
+      setKwErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setKwBusy(false);
     }
   };
 
@@ -241,6 +319,18 @@ export default function App() {
       {tab === "parse" && (
         <section className="card" aria-labelledby="parse-h">
           <h2 id="parse-h">Log input</h2>
+
+          <div className="row">
+            <label className="fmt" style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
+              <input
+                type="checkbox"
+                checked={asyncMode}
+                onChange={(e) => setAsyncMode(e.target.checked)}
+                aria-label="Process in background (async job)"
+              />
+              Async job (poll status)
+            </label>
+          </div>
 
           <div className="row">
             <label className="fmt">
@@ -406,6 +496,11 @@ export default function App() {
               {copyHint}
             </p>
           )}
+          {jobStatusLine && (
+            <p className="sub" role="status">
+              Job: {jobStatusLine}
+            </p>
+          )}
 
           {procError && <div className="errors">{procError}</div>}
           {previewErr && <div className="errors">{previewErr}</div>}
@@ -534,6 +629,58 @@ export default function App() {
       {tab === "query" && (
         <section className="card" aria-labelledby="query-h">
           <h2 id="query-h">Natural language query</h2>
+          <h3 className="sub" style={{ fontSize: "0.95rem", marginBottom: "0.5rem" }}>
+            Keyword search (<code>/search</code> · <code>search_text</code> + GIN)
+          </h3>
+          <div className="row">
+            <input
+              type="text"
+              className="input-log"
+              style={{ minHeight: "unset", flex: "1 1 200px" }}
+              value={kw}
+              onChange={(e) => setKw(e.target.value)}
+              aria-label="Keyword search"
+              placeholder="e.g. vacuum thermal machine_001"
+            />
+            <button
+              type="button"
+              className="btn"
+              disabled={kwBusy || queryOk === false}
+              onClick={() => void submitKeywordSearch()}
+            >
+              {kwBusy ? "Searching…" : "Search"}
+            </button>
+          </div>
+          {kwErr && <div className="errors">{kwErr}</div>}
+          {kwRes && kwRes.rows.length > 0 && (
+            <div className="table-wrap" style={{ marginBottom: "1rem" }}>
+              <table className="result">
+                <thead>
+                  <tr>
+                    {Object.keys(kwRes.rows[0]).map((k) => (
+                      <th key={k}>{k}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {kwRes.rows.map((row, i) => (
+                    <tr key={i}>
+                      {Object.values(row).map((v, j) => (
+                        <td key={j}>{String(v)}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {kwRes && kwRes.rows.length === 0 && (
+            <p className="sub">No matches (try other terms or ingest logs first).</p>
+          )}
+
+          <h3 className="sub" style={{ fontSize: "0.95rem", margin: "1rem 0 0.5rem" }}>
+            Natural language (LLM → SQL)
+          </h3>
           <textarea
             className="input-log"
             value={qText}

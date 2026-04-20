@@ -24,6 +24,14 @@ class SqlValidateTests(unittest.TestCase):
             validate_generated_sql("SELECT * FROM pg_user LIMIT 1")
         self.assertIn("disallowed", str(ctx.exception.detail).lower())
 
+    def test_rejects_subquery_bad_table(self) -> None:
+        with self.assertRaises(HTTPException) as ctx:
+            validate_generated_sql(
+                "SELECT * FROM normalized_events WHERE EXISTS "
+                "(SELECT 1 FROM pg_catalog.pg_class AS c LIMIT 1)"
+            )
+        self.assertIn("disallowed", str(ctx.exception.detail).lower())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -408,6 +408,7 @@ async def insert_raw_log(
             await conn.execute("""
                 INSERT INTO raw_logs (job_id, timestamp, file_name, file_format, raw_content, file_hash)
                 VALUES ($1, $2, $3, $4, $5, $6)
+                ON CONFLICT (job_id, timestamp) DO NOTHING
             """, job_id, timestamp, file_name, file_format, raw_content, file_hash)
         logger.info(f"Inserted raw log: job_id={job_id}")
         return True
@@ -441,7 +442,12 @@ async def insert_normalized_event(
                     ai_category, ai_root_cause, ai_recommended_action,
                     confidence_score, requires_review, review_reason, search_text
                 )
+<<<<<<< HEAD
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+=======
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                ON CONFLICT (job_id, timestamp) DO NOTHING
+>>>>>>> origin/main
             """,
             job_id, timestamp, source, event_type, severity, message,
             ai_category, ai_root_cause, ai_recommended_action,
@@ -462,6 +468,7 @@ async def insert_event_routing(job_id: str, kafka_topic: str) -> bool:
             await conn.execute("""
                 INSERT INTO event_routing (job_id, kafka_topic)
                 VALUES ($1, $2)
+                ON CONFLICT (job_id) DO NOTHING
             """, job_id, kafka_topic)
         logger.info(f"Recorded routing: job_id={job_id}, topic={kafka_topic}")
         return True
@@ -478,6 +485,7 @@ async def insert_review_queue_item(job_id: str) -> bool:
             await conn.execute("""
                 INSERT INTO review_queue_status (job_id, status)
                 VALUES ($1, 'pending')
+                ON CONFLICT (job_id) DO NOTHING
             """, job_id)
         logger.info(f"Added to review queue: job_id={job_id}")
         return True

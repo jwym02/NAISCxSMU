@@ -1,5 +1,3 @@
-version: "3.9"
-
 # ════════════════════════════════════════════════════════════
 #  Smart Tool Log Parser — Docker Compose (Final)
 #
@@ -502,6 +500,8 @@ services:
       dockerfile: Dockerfile
     container_name: app-consumer-cold
     command: python -m app.consumers.cold_path
+    ports:
+      - "8084:8084"
     env_file: .env
     environment:
       DATABASE_URL: postgresql://logparser:logparser_secret@timescaledb:5432/logparser_db
@@ -542,6 +542,8 @@ services:
       dockerfile: Dockerfile
     container_name: app-consumer-deadletter
     command: python -m app.consumers.dead_letter
+    ports:
+      - "8085:8085"
     env_file: .env
     environment:
       DATABASE_URL: postgresql://logparser:logparser_secret@timescaledb:5432/logparser_db

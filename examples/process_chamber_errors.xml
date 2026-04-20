@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<EventLog facility="semiconductor-fab" site="FAB-12" exported="2026-04-20T20:00:00Z">
+
+  <Event>
+    <timestamp>2026-04-20T01:03:11Z</timestamp>
+    <source>tool_CVD-CHAMBER-B</source>
+    <event_type>film_thickness_oos</event_type>
+    <severity>ERROR</severity>
+    <message>TEOS oxide deposition thickness measured at 312 nm vs 400 nm target. Run aborted after step 2.</message>
+    <wafer_lot>LOT-88410</wafer_lot>
+    <target_nm>400</target_nm>
+    <measured_nm>312</measured_nm>
+    <recipe>TEOS-STD-400NM-v3</recipe>
+  </Event>
+
+  <Event>
+    <timestamp>2026-04-20T02:55:44Z</timestamp>
+    <source>tool_ETCH-03</source>
+    <event_type>endpoint_miss</event_type>
+    <severity>ERROR</severity>
+    <message>Etch endpoint not detected within timeout window (180 s). Wafer may be over-etched. Lot flagged for metrology review.</message>
+    <wafer_lot>LOT-88433</wafer_lot>
+    <timeout_s>180</timeout_s>
+    <recipe>POLY-GATE-ETCH-v7</recipe>
+  </Event>
+
+  <Event>
+    <timestamp>2026-04-20T04:18:02Z</timestamp>
+    <source>device_CHILLER-CMP-01</source>
+    <event_type>coolant_leak</event_type>
+    <severity>CRITICAL</severity>
+    <message>Coolant leak detected at chiller outlet manifold. Flow dropped to 0.2 L/min (normal: 4.5 L/min). CMP tool emergency stop.</message>
+    <zone>CMP Bay 1</zone>
+    <flow_lpm_normal>4.5</flow_lpm_normal>
+    <flow_lpm_actual>0.2</flow_lpm_actual>
+  </Event>
+
+  <Event>
+    <timestamp>2026-04-20T05:40:17Z</timestamp>
+    <source>tool_IMPLANT-01</source>
+    <event_type>beam_current_fault</event_type>
+    <severity>CRITICAL</severity>
+    <message>Ion beam current dropped to zero during boron implant. Source filament failure suspected. Lot quarantined.</message>
+    <wafer_lot>LOT-88449</wafer_lot>
+    <recipe>BORON-BODY-IMPLANT-v2</recipe>
+    <beam_current_ma>0.0</beam_current_ma>
+    <expected_ma>14.5</expected_ma>
+  </Event>
+
+  <Event>
+    <timestamp>2026-04-20T07:12:55Z</timestamp>
+    <source>machine_WET-BENCH-02</source>
+    <event_type>chemical_concentration_oos</event_type>
+    <severity>WARNING</severity>
+    <message>HF bath concentration measured at 0.38% (spec: 0.50% ± 0.05%). Refreshing chemical bath before next lot.</message>
+    <zone>Wet Clean Bay</zone>
+    <spec_pct>0.50</spec_pct>
+    <measured_pct>0.38</measured_pct>
+    <bath_id>HF-BATH-02</bath_id>
+  </Event>
+
+  <Event>
+    <timestamp>2026-04-20T09:05:30Z</timestamp>
+    <source>tool_LITHO-SCANNER-03</source>
+    <event_type>focus_error</event_type>
+    <severity>WARNING</severity>
+    <message>Autofocus failed on wafer slot 7 — surface height out of range. Wafer excluded from exposure. Remaining slots processed.</message>
+    <wafer_lot>LOT-88471</wafer_lot>
+    <failed_slot>7</failed_slot>
+    <recipe>M1-METAL-LAYER-v12</recipe>
+  </Event>
+
+  <Event>
+    <timestamp>2026-04-20T10:30:00Z</timestamp>
+    <source>device_VACUUM-GAUGE-ETCH-01</source>
+    <event_type>sensor_drift</event_type>
+    <severity>INFO</severity>
+    <message>Capacitance manometer reading drifting — zero offset exceeded 0.5 mTorr. Recalibration scheduled for next PM window.</message>
+    <zone>Etch Bay 1</zone>
+    <zero_offset_mtorr>0.52</zero_offset_mtorr>
+  </Event>
+
+  <Event>
+    <timestamp>2026-04-20T14:48:39Z</timestamp>
+    <source>tool_ANNEAL-02</source>
+    <event_type>ramp_rate_fault</event_type>
+    <severity>ERROR</severity>
+    <message>Temperature ramp rate exceeded spec during RTP anneal (85°C/s vs max 75°C/s). Possible thermal stress. Lot held for inspection.</message>
+    <wafer_lot>LOT-88499</wafer_lot>
+    <max_ramp_cs>75</max_ramp_cs>
+    <actual_ramp_cs>85</actual_ramp_cs>
+    <recipe>RTP-NiSi-ANNEAL-v4</recipe>
+  </Event>
+
+</EventLog>

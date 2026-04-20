@@ -1,0 +1,105 @@
+[
+  {
+    "timestamp": "2026-04-20T02:14:33Z",
+    "source": "tool_PECVD-01",
+    "event_type": "fire_alarm",
+    "severity": "CRITICAL",
+    "message": "Smoke detected in chamber exhaust duct — auto-shutoff triggered",
+    "zone": "Fab Bay 3",
+    "wafer_lot": "LOT-88421"
+  },
+  {
+    "timestamp": "2026-04-20T02:15:01Z",
+    "source": "tool_PECVD-01",
+    "event_type": "gas_leak",
+    "severity": "CRITICAL",
+    "message": "Silane (SiH4) concentration above LEL threshold (12%). Emergency purge initiated.",
+    "zone": "Fab Bay 3",
+    "wafer_lot": "LOT-88421",
+    "sensor_ppm": 4200
+  },
+  {
+    "timestamp": "2026-04-20T03:47:19Z",
+    "source": "tool_ETCH-05",
+    "event_type": "arc_fault",
+    "severity": "CRITICAL",
+    "message": "RF arc detected in process chamber — plasma discharge abnormal. Recipe aborted.",
+    "zone": "Etch Bay 1",
+    "wafer_lot": "LOT-88455",
+    "rf_power_w": 1450,
+    "dc_bias_v": -320
+  },
+  {
+    "timestamp": "2026-04-20T06:02:58Z",
+    "source": "machine_ROBOT-ARM-02",
+    "event_type": "collision",
+    "severity": "CRITICAL",
+    "message": "Wafer handling arm collision detected at end-effector — E-stop engaged. Wafer breakage confirmed.",
+    "zone": "Transfer Chamber 2",
+    "wafer_lot": "LOT-88461",
+    "arm_position": "slot_13"
+  },
+  {
+    "timestamp": "2026-04-20T08:31:44Z",
+    "source": "device_PUMP-CMP-03",
+    "event_type": "overheat",
+    "severity": "CRITICAL",
+    "message": "Slurry pump motor temperature exceeded 140°C. Cooling system failure. CMP tool halted.",
+    "zone": "CMP Bay 2",
+    "motor_temp_c": 143,
+    "coolant_flow_lpm": 0.0
+  },
+  {
+    "timestamp": "2026-04-20T11:18:09Z",
+    "source": "tool_LITHO-SCANNER-07",
+    "event_type": "contamination_alert",
+    "severity": "ERROR",
+    "message": "Reticle contamination detected during pre-scan inspection — particle count 47 (limit: 5). Scanner locked.",
+    "zone": "Lithography Bay",
+    "wafer_lot": "LOT-88490",
+    "particle_count": 47,
+    "particle_size_nm": 120
+  },
+  {
+    "timestamp": "2026-04-20T13:05:22Z",
+    "source": "tool_DIFFUSION-02",
+    "event_type": "temperature_deviation",
+    "severity": "ERROR",
+    "message": "Furnace zone 3 temperature deviated +18°C from setpoint for >120s. Wafer lot quarantined.",
+    "zone": "Diffusion Bay",
+    "wafer_lot": "LOT-88502",
+    "setpoint_c": 950,
+    "actual_c": 968,
+    "duration_s": 127
+  },
+  {
+    "timestamp": "2026-04-20T15:44:31Z",
+    "source": "tool_PECVD-03",
+    "event_type": "pressure_fault",
+    "severity": "WARNING",
+    "message": "Process chamber pressure drifted above spec during deposition step (8.2 mTorr vs 7.0 mTorr target).",
+    "zone": "Fab Bay 3",
+    "wafer_lot": "LOT-88511",
+    "target_mtorr": 7.0,
+    "actual_mtorr": 8.2
+  },
+  {
+    "timestamp": "2026-04-20T17:22:05Z",
+    "source": "machine_GAS-PANEL-01",
+    "event_type": "mas_flow_warning",
+    "severity": "WARNING",
+    "message": "N2O MFC flow deviation: commanded 500 sccm, measured 471 sccm. MFC may require recalibration.",
+    "zone": "Gas Cabinet A",
+    "commanded_sccm": 500,
+    "measured_sccm": 471
+  },
+  {
+    "timestamp": "2026-04-20T19:00:00Z",
+    "source": "device_VACUUM-PUMP-ETCH-02",
+    "event_type": "maintenance_due",
+    "severity": "INFO",
+    "message": "Dry pump scheduled maintenance interval reached (2000 hrs). Schedule downtime for service.",
+    "zone": "Etch Bay 1",
+    "runtime_hours": 2001
+  }
+]

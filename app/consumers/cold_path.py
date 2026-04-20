@@ -54,6 +54,7 @@ total_flushed:   int           = 0
 # ── FastAPI app & Kafka handle ─────────────────────────────────────────────────
 app = FastAPI(title="Cold Path Consumer")
 kafka_consumer: Optional[AIOKafkaConsumer] = None
+_tasks: list = []  # holds task handles so they can be cancelled on shutdown
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -304,8 +305,8 @@ async def startup():
     # It creates tables/hypertables only if they don't already exist.
     await init_schema()
 
-    asyncio.create_task(consume_messages(), name="cold-consumer")
-    asyncio.create_task(timer_loop(),       name="cold-timer")
+    _tasks.append(asyncio.create_task(consume_messages(), name="cold-consumer"))
+    _tasks.append(asyncio.create_task(timer_loop(),       name="cold-timer"))
 
     logger.info("Cold path consumer ready")
 
@@ -322,7 +323,14 @@ async def shutdown():
 
     logger.info("Cold path consumer shutting down…")
 
-    # Stop Kafka first so no new events arrive during the final flush.
+    # Cancel background tasks first so they stop producing work.
+    for task in _tasks:
+        task.cancel()
+    if _tasks:
+        await asyncio.gather(*_tasks, return_exceptions=True)
+        logger.info("Background tasks cancelled")
+
+    # Stop Kafka so no new events arrive during the final flush.
     if kafka_consumer:
         await kafka_consumer.stop()
         logger.info("Kafka consumer stopped")

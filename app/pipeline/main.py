@@ -108,7 +108,7 @@ async def process_log_file(file_data: bytes, file_name: str, file_format: Option
         # STEP 3: NORMALIZE
         # AI categorization, severity detection, confidence scoring
         try:
-            normalize_result = normalize_log(records)
+            normalize_result = await normalize_log(records)
             normalized_events = normalize_result.get("normalized_records", [])   # key is "normalized_records"
             review_queue_items = normalize_result.get("review_queue_items", [])
             

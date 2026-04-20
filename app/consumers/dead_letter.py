@@ -62,6 +62,7 @@ total_written:  int  = 0
 
 app = FastAPI(title="Dead Letter Consumer")
 kafka_consumer: Optional[AIOKafkaConsumer] = None
+_consumer_task: Optional[asyncio.Task] = None  # held for cancellation on shutdown
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -285,7 +286,8 @@ async def startup():
     # init_schema() is idempotent — creates tables only if they don't exist.
     await init_schema()
 
-    asyncio.create_task(consume_messages(), name="deadletter-consumer")
+    global _consumer_task
+    _consumer_task = asyncio.create_task(consume_messages(), name="deadletter-consumer")
     logger.info("Dead-letter consumer ready")
 
 
@@ -294,6 +296,12 @@ async def shutdown():
     global kafka_consumer
 
     logger.info("Dead-letter consumer shutting down…")
+
+    # Cancel the background task before stopping Kafka.
+    if _consumer_task and not _consumer_task.done():
+        _consumer_task.cancel()
+        await asyncio.gather(_consumer_task, return_exceptions=True)
+        logger.info("Consumer task cancelled")
 
     if kafka_consumer:
         await kafka_consumer.stop()

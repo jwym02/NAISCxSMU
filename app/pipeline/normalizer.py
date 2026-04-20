@@ -137,7 +137,7 @@ RULES_TABLE    = os.getenv("DYNAMODB_TABLE_RULES", "normalization-rules")
 REVIEW_TABLE   = os.getenv("DYNAMODB_TABLE_REVIEW", "human-review-queue")
 CONFIDENCE_THRESHOLD = float(os.getenv("NORMALIZE_CONFIDENCE_THRESHOLD", "0.85"))
 
-def call_ai(record: dict) -> dict:
+async def call_ai(record: dict) -> dict:
     prompt = f"""You are analyzing a manufacturing machine log event.
 
     Machine: {record.get('source', 'unknown')}
@@ -157,21 +157,22 @@ def call_ai(record: dict) -> dict:
     For confidence: use 0.9+ if very clear, 0.7-0.9 if fairly clear, 0.5-0.7 if uncertain, <0.5 if very unclear."""
 
     try:
-        response = httpx.post(
-            OPENROUTER_URL,
-            headers={
-                "Authorization": f"Bearer {AI_KEY}",
-                "Content-Type": "application/json"
-            },
-            json={
-                "model": AI_MODEL,
-                "messages": [{"role": "user", "content": prompt}],
-            },
-            timeout=15.0
-        )
-        response.raise_for_status()
-        content = response.json()["choices"][0]["message"]["content"]
-        result = json.loads(content)
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                OPENROUTER_URL,
+                headers={
+                    "Authorization": f"Bearer {AI_KEY}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": AI_MODEL,
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+                timeout=15.0
+            )
+            response.raise_for_status()
+            content = response.json()["choices"][0]["message"]["content"]
+            result = json.loads(content)
         
         # Ensure confidence is a valid float between 0 and 1
         if "confidence" in result:
@@ -237,12 +238,12 @@ def combine_and_score(record: dict, ai_result: dict, rule: dict | None):
 
     return final, confidence, review_reason
 
-def normalize_log(parsed_records: list) -> dict:
+async def normalize_log(parsed_records: list) -> dict:
     normalized_records = []
     review_queue_items = []
 
     for record in parsed_records:
-        ai_result = call_ai(record)
+        ai_result = await call_ai(record)
         rule      = lookup_rule(record)
         final, confidence, review_reason = combine_and_score(record, ai_result, rule)
 

@@ -16,6 +16,8 @@ from app.shared.db import (
     get_event_with_routing,
     update_review_status,
     get_pool,
+    get_event_stats,
+    get_events_timeseries,
 )
 from app.pipeline.ingest import ingest_log
 
@@ -204,7 +206,37 @@ async def review_queue_item(job_id: str, review: ReviewRequest):
         raise HTTPException(status_code=500, detail="Error processing review")
 
 
-# ── ENDPOINT 5: GET /health ───────────────────────────────────────────────────
+# ── ENDPOINT 5: GET /stats ────────────────────────────────────────────────────
+
+@router.get("/stats")
+async def get_stats():
+    """Return aggregate dashboard statistics (events processed, in review, errors, severity breakdown)."""
+    try:
+        stats = await get_event_stats()
+        return stats
+    except Exception as e:
+        logging.error(f"Error fetching stats: {e}")
+        raise HTTPException(status_code=500, detail="Error fetching stats")
+
+
+# ── ENDPOINT 6: GET /events/timeseries ────────────────────────────────────────
+
+@router.get("/events/timeseries")
+async def get_timeseries(hours: int = 12):
+    """Return hourly event counts grouped by severity for the last N hours (1–168)."""
+    try:
+        if not (1 <= hours <= 168):
+            raise HTTPException(status_code=400, detail="hours must be between 1 and 168")
+        data = await get_events_timeseries(hours)
+        return {"hours": hours, "data": data}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error fetching timeseries: {e}")
+        raise HTTPException(status_code=500, detail="Error fetching timeseries")
+
+
+# ── ENDPOINT 7: GET /health ───────────────────────────────────────────────────
 
 @router.get("/health")
 async def health():

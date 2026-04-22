@@ -411,6 +411,78 @@ async def get_review_queue_pending() -> List[Dict[str, Any]]:
         return []
 
 
+async def get_event_stats() -> Dict[str, Any]:
+    """Get aggregate counts for the dashboard summary panel."""
+    pool = await get_pool()
+    try:
+        async with pool.acquire() as conn:
+            total = await conn.fetchval("SELECT COUNT(*) FROM normalized_events")
+            in_review = await conn.fetchval(
+                "SELECT COUNT(*) FROM review_queue_status WHERE status = 'pending'"
+            )
+            # Jobs with no corresponding normalized event (processing failures)
+            failures = await conn.fetchval("""
+                SELECT COUNT(*) FROM raw_logs r
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM normalized_events ne WHERE ne.job_id = r.job_id
+                )
+            """)
+            jobs_today = await conn.fetchval("""
+                SELECT COUNT(*) FROM raw_logs
+                WHERE created_at >= CURRENT_DATE
+            """)
+            severity_rows = await conn.fetch("""
+                SELECT UPPER(severity) AS severity, COUNT(*) AS count
+                FROM normalized_events
+                GROUP BY UPPER(severity)
+            """)
+        severity_breakdown = {row["severity"]: int(row["count"]) for row in severity_rows}
+        return {
+            "events_processed": int(total or 0),
+            "events_in_review": int(in_review or 0),
+            "errors": int(failures or 0),
+            "jobs_today": int(jobs_today or 0),
+            "severity_breakdown": severity_breakdown,
+        }
+    except Exception as e:
+        logger.error(f"Failed to get event stats: {e}")
+        return {
+            "events_processed": 0,
+            "events_in_review": 0,
+            "errors": 0,
+            "jobs_today": 0,
+            "severity_breakdown": {},
+        }
+
+
+async def get_events_timeseries(hours: int = 12) -> List[Dict[str, Any]]:
+    """Get hourly event counts grouped by severity for the last N hours."""
+    pool = await get_pool()
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT
+                    time_bucket('1 hour', timestamp) AS hour,
+                    UPPER(severity) AS severity,
+                    COUNT(*) AS count
+                FROM normalized_events
+                WHERE timestamp >= NOW() - ($1::int * INTERVAL '1 hour')
+                GROUP BY time_bucket('1 hour', timestamp), UPPER(severity)
+                ORDER BY hour ASC
+            """, hours)
+        return [
+            {
+                "hour": row["hour"].isoformat(),
+                "severity": row["severity"],
+                "count": int(row["count"]),
+            }
+            for row in rows
+        ]
+    except Exception as e:
+        logger.error(f"Failed to get events timeseries: {e}")
+        return []
+
+
 async def get_event_with_routing(job_id: str) -> Optional[Dict[str, Any]]:
     """Get a normalized event with its routing info."""
     pool = await get_pool()

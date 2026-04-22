@@ -219,3 +219,7 @@ frontend/.vite/
 frontend/dist/
 node_modules/
 .vite/
+
+# Keep frontend source utilities tracked (overrides broad `lib/` rule above)
+!frontend/src/lib/
+!frontend/src/lib/*.ts

@@ -1,0 +1,40 @@
+.app {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.sub {
+  color: #94a3b8;
+  margin-top: 4px;
+}
+
+.panel {
+  background: #111827;
+  border: 1px solid #1f2937;
+  border-radius: 10px;
+  padding: 16px;
+  margin-top: 16px;
+}
+
+textarea {
+  width: 100%;
+  min-height: 180px;
+  margin-top: 8px;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid #334155;
+  background: #020617;
+  color: #e2e8f0;
+}
+
+pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 8px 0 0;
+  padding: 12px;
+  border-radius: 8px;
+  background: #020617;
+  border: 1px solid #334155;
+  min-height: 120px;
+}

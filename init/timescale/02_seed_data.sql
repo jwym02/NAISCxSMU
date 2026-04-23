@@ -1,0 +1,2649 @@
+--
+-- PostgreSQL database dump
+--
+
+\restrict EnV84pwdfLUhsIDvLugsdV5m6fXIf8UPWBKwOsBneI1oIQ3GNcaP7buVC4fVoih
+
+-- Dumped from database version 16.13
+-- Dumped by pg_dump version 16.13
+
+SET statement_timeout = 0;
+SET lock_timeout = 0;
+SET idle_in_transaction_session_timeout = 0;
+SET client_encoding = 'UTF8';
+SET standard_conforming_strings = on;
+SELECT pg_catalog.set_config('search_path', '', false);
+SET check_function_bodies = false;
+SET xmloption = content;
+SET client_min_messages = warning;
+SET row_security = off;
+
+--
+-- Name: timescaledb; Type: EXTENSION; Schema: -; Owner: -
+--
+
+CREATE EXTENSION IF NOT EXISTS timescaledb WITH SCHEMA public;
+
+
+--
+-- Name: EXTENSION timescaledb; Type: COMMENT; Schema: -; Owner: 
+--
+
+COMMENT ON EXTENSION timescaledb IS 'Enables scalable inserts and complex queries for time-series data (Community Edition)';
+
+
+--
+-- Name: log_format_type; Type: TYPE; Schema: public; Owner: logparser
+--
+
+CREATE TYPE public.log_format_type AS ENUM (
+    'JSON',
+    'XML',
+    'CSV',
+    'SYSLOG',
+    'KEY_VALUE',
+    'TEXT',
+    'BINARY',
+    'UNKNOWN'
+);
+
+
+ALTER TYPE public.log_format_type OWNER TO logparser;
+
+--
+-- Name: path_type; Type: TYPE; Schema: public; Owner: logparser
+--
+
+CREATE TYPE public.path_type AS ENUM (
+    'HOT',
+    'COLD',
+    'DEADLETTER'
+);
+
+
+ALTER TYPE public.path_type OWNER TO logparser;
+
+--
+-- Name: severity_level; Type: TYPE; Schema: public; Owner: logparser
+--
+
+CREATE TYPE public.severity_level AS ENUM (
+    'CRITICAL',
+    'ERROR',
+    'WARN',
+    'INFO',
+    'DEBUG'
+);
+
+
+ALTER TYPE public.severity_level OWNER TO logparser;
+
+--
+-- Name: urgency_priority; Type: TYPE; Schema: public; Owner: logparser
+--
+
+CREATE TYPE public.urgency_priority AS ENUM (
+    'P0',
+    'P1',
+    'P2',
+    'DEADLETTER'
+);
+
+
+ALTER TYPE public.urgency_priority OWNER TO logparser;
+
+SET default_tablespace = '';
+
+SET default_table_access_method = heap;
+
+--
+-- Name: _compressed_hypertable_4; Type: TABLE; Schema: _timescaledb_internal; Owner: logparser
+--
+
+CREATE TABLE _timescaledb_internal._compressed_hypertable_4 (
+);
+
+
+ALTER TABLE _timescaledb_internal._compressed_hypertable_4 OWNER TO logparser;
+
+--
+-- Name: log_events; Type: TABLE; Schema: public; Owner: logparser
+--
+
+CREATE TABLE public.log_events (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    event_time timestamp with time zone NOT NULL,
+    ingested_at timestamp with time zone DEFAULT now() NOT NULL,
+    tool_id text NOT NULL,
+    vendor_id text,
+    machine_type text,
+    wafer_id text,
+    recipe_name text,
+    source_file text,
+    log_format public.log_format_type DEFAULT 'UNKNOWN'::public.log_format_type NOT NULL,
+    severity public.severity_level DEFAULT 'INFO'::public.severity_level NOT NULL,
+    priority public.urgency_priority DEFAULT 'P2'::public.urgency_priority NOT NULL,
+    path public.path_type DEFAULT 'COLD'::public.path_type NOT NULL,
+    event_type text,
+    fault_code text,
+    process_step text,
+    temperature_k double precision,
+    pressure_pa double precision,
+    flow_slm double precision,
+    rf_power_w double precision,
+    raw_payload jsonb,
+    normalized_payload jsonb,
+    parse_confidence double precision,
+    normalize_confidence double precision,
+    job_id uuid,
+    reviewed_by_human boolean DEFAULT false,
+    CONSTRAINT log_events_normalize_confidence_check CHECK (((normalize_confidence >= (0)::double precision) AND (normalize_confidence <= (1)::double precision))),
+    CONSTRAINT log_events_parse_confidence_check CHECK (((parse_confidence >= (0)::double precision) AND (parse_confidence <= (1)::double precision)))
+);
+
+
+ALTER TABLE public.log_events OWNER TO logparser;
+
+--
+-- Name: _direct_view_2; Type: VIEW; Schema: _timescaledb_internal; Owner: logparser
+--
+
+CREATE VIEW _timescaledb_internal._direct_view_2 AS
+ SELECT public.time_bucket('00:05:00'::interval, event_time) AS bucket,
+    tool_id,
+    severity,
+    count(*) AS event_count,
+    avg(normalize_confidence) AS avg_norm_conf,
+    avg(temperature_k) AS avg_temp_k,
+    avg(pressure_pa) AS avg_pressure_pa,
+    avg(rf_power_w) AS avg_rf_power_w
+   FROM public.log_events
+  GROUP BY (public.time_bucket('00:05:00'::interval, event_time)), tool_id, severity;
+
+
+ALTER VIEW _timescaledb_internal._direct_view_2 OWNER TO logparser;
+
+--
+-- Name: _direct_view_3; Type: VIEW; Schema: _timescaledb_internal; Owner: logparser
+--
+
+CREATE VIEW _timescaledb_internal._direct_view_3 AS
+ SELECT public.time_bucket('01:00:00'::interval, event_time) AS bucket,
+    tool_id,
+    severity,
+    count(*) AS event_count,
+    sum(
+        CASE
+            WHEN (severity = 'CRITICAL'::public.severity_level) THEN 1
+            ELSE 0
+        END) AS critical_count,
+    sum(
+        CASE
+            WHEN (severity = 'ERROR'::public.severity_level) THEN 1
+            ELSE 0
+        END) AS error_count,
+    avg(temperature_k) AS avg_temp_k,
+    avg(pressure_pa) AS avg_pressure_pa
+   FROM public.log_events
+  GROUP BY (public.time_bucket('01:00:00'::interval, event_time)), tool_id, severity;
+
+
+ALTER VIEW _timescaledb_internal._direct_view_3 OWNER TO logparser;
+
+--
+-- Name: normalized_events; Type: TABLE; Schema: public; Owner: logparser
+--
+
+CREATE TABLE public.normalized_events (
+    job_id uuid NOT NULL,
+    "timestamp" timestamp with time zone NOT NULL,
+    source text NOT NULL,
+    event_type text NOT NULL,
+    severity text NOT NULL,
+    message text NOT NULL,
+    ai_category text,
+    ai_root_cause text,
+    ai_recommended_action text,
+    confidence_score double precision,
+    requires_review boolean DEFAULT false,
+    review_reason text,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+);
+
+
+ALTER TABLE public.normalized_events OWNER TO logparser;
+
+--
+-- Name: _hyper_6_1_chunk; Type: TABLE; Schema: _timescaledb_internal; Owner: logparser
+--
+
+CREATE TABLE _timescaledb_internal._hyper_6_1_chunk (
+    CONSTRAINT constraint_1 CHECK ((("timestamp" >= '2026-04-16 00:00:00+00'::timestamp with time zone) AND ("timestamp" < '2026-04-23 00:00:00+00'::timestamp with time zone)))
+)
+INHERITS (public.normalized_events);
+
+
+ALTER TABLE _timescaledb_internal._hyper_6_1_chunk OWNER TO logparser;
+
+--
+-- Name: _hyper_6_2_chunk; Type: TABLE; Schema: _timescaledb_internal; Owner: logparser
+--
+
+CREATE TABLE _timescaledb_internal._hyper_6_2_chunk (
+    CONSTRAINT constraint_2 CHECK ((("timestamp" >= '2026-04-23 00:00:00+00'::timestamp with time zone) AND ("timestamp" < '2026-04-30 00:00:00+00'::timestamp with time zone)))
+)
+INHERITS (public.normalized_events);
+
+
+ALTER TABLE _timescaledb_internal._hyper_6_2_chunk OWNER TO logparser;
+
+--
+-- Name: _materialized_hypertable_2; Type: TABLE; Schema: _timescaledb_internal; Owner: logparser
+--
+
+CREATE TABLE _timescaledb_internal._materialized_hypertable_2 (
+    bucket timestamp with time zone NOT NULL,
+    tool_id text,
+    severity public.severity_level,
+    event_count bigint,
+    avg_norm_conf double precision,
+    avg_temp_k double precision,
+    avg_pressure_pa double precision,
+    avg_rf_power_w double precision
+);
+
+
+ALTER TABLE _timescaledb_internal._materialized_hypertable_2 OWNER TO logparser;
+
+--
+-- Name: _materialized_hypertable_3; Type: TABLE; Schema: _timescaledb_internal; Owner: logparser
+--
+
+CREATE TABLE _timescaledb_internal._materialized_hypertable_3 (
+    bucket timestamp with time zone NOT NULL,
+    tool_id text,
+    severity public.severity_level,
+    event_count bigint,
+    critical_count bigint,
+    error_count bigint,
+    avg_temp_k double precision,
+    avg_pressure_pa double precision
+);
+
+
+ALTER TABLE _timescaledb_internal._materialized_hypertable_3 OWNER TO logparser;
+
+--
+-- Name: _partial_view_2; Type: VIEW; Schema: _timescaledb_internal; Owner: logparser
+--
+
+CREATE VIEW _timescaledb_internal._partial_view_2 AS
+ SELECT public.time_bucket('00:05:00'::interval, event_time) AS bucket,
+    tool_id,
+    severity,
+    count(*) AS event_count,
+    avg(normalize_confidence) AS avg_norm_conf,
+    avg(temperature_k) AS avg_temp_k,
+    avg(pressure_pa) AS avg_pressure_pa,
+    avg(rf_power_w) AS avg_rf_power_w
+   FROM public.log_events
+  GROUP BY (public.time_bucket('00:05:00'::interval, event_time)), tool_id, severity;
+
+
+ALTER VIEW _timescaledb_internal._partial_view_2 OWNER TO logparser;
+
+--
+-- Name: _partial_view_3; Type: VIEW; Schema: _timescaledb_internal; Owner: logparser
+--
+
+CREATE VIEW _timescaledb_internal._partial_view_3 AS
+ SELECT public.time_bucket('01:00:00'::interval, event_time) AS bucket,
+    tool_id,
+    severity,
+    count(*) AS event_count,
+    sum(
+        CASE
+            WHEN (severity = 'CRITICAL'::public.severity_level) THEN 1
+            ELSE 0
+        END) AS critical_count,
+    sum(
+        CASE
+            WHEN (severity = 'ERROR'::public.severity_level) THEN 1
+            ELSE 0
+        END) AS error_count,
+    avg(temperature_k) AS avg_temp_k,
+    avg(pressure_pa) AS avg_pressure_pa
+   FROM public.log_events
+  GROUP BY (public.time_bucket('01:00:00'::interval, event_time)), tool_id, severity;
+
+
+ALTER VIEW _timescaledb_internal._partial_view_3 OWNER TO logparser;
+
+--
+-- Name: event_routing; Type: TABLE; Schema: public; Owner: logparser
+--
+
+CREATE TABLE public.event_routing (
+    id bigint NOT NULL,
+    job_id uuid NOT NULL,
+    kafka_topic text NOT NULL,
+    routed_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+);
+
+
+ALTER TABLE public.event_routing OWNER TO logparser;
+
+--
+-- Name: event_routing_id_seq; Type: SEQUENCE; Schema: public; Owner: logparser
+--
+
+CREATE SEQUENCE public.event_routing_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.event_routing_id_seq OWNER TO logparser;
+
+--
+-- Name: event_routing_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: logparser
+--
+
+ALTER SEQUENCE public.event_routing_id_seq OWNED BY public.event_routing.id;
+
+
+--
+-- Name: events_1hour; Type: VIEW; Schema: public; Owner: logparser
+--
+
+CREATE VIEW public.events_1hour AS
+ SELECT bucket,
+    tool_id,
+    severity,
+    event_count,
+    critical_count,
+    error_count,
+    avg_temp_k,
+    avg_pressure_pa
+   FROM _timescaledb_internal._materialized_hypertable_3;
+
+
+ALTER VIEW public.events_1hour OWNER TO logparser;
+
+--
+-- Name: events_5min; Type: VIEW; Schema: public; Owner: logparser
+--
+
+CREATE VIEW public.events_5min AS
+ SELECT bucket,
+    tool_id,
+    severity,
+    event_count,
+    avg_norm_conf,
+    avg_temp_k,
+    avg_pressure_pa,
+    avg_rf_power_w
+   FROM _timescaledb_internal._materialized_hypertable_2;
+
+
+ALTER VIEW public.events_5min OWNER TO logparser;
+
+--
+-- Name: events_by_hour; Type: MATERIALIZED VIEW; Schema: public; Owner: logparser
+--
+
+CREATE MATERIALIZED VIEW public.events_by_hour AS
+ SELECT public.time_bucket('01:00:00'::interval, "timestamp") AS bucket,
+    ai_category,
+    severity,
+    count(*) AS event_count
+   FROM public.normalized_events
+  GROUP BY (public.time_bucket('01:00:00'::interval, "timestamp")), ai_category, severity
+  WITH NO DATA;
+
+
+ALTER MATERIALIZED VIEW public.events_by_hour OWNER TO logparser;
+
+--
+-- Name: events_by_machine_daily; Type: MATERIALIZED VIEW; Schema: public; Owner: logparser
+--
+
+CREATE MATERIALIZED VIEW public.events_by_machine_daily AS
+ SELECT public.time_bucket('1 day'::interval, "timestamp") AS bucket,
+    source,
+    ai_category,
+    severity,
+    count(*) AS event_count,
+    avg(confidence_score) AS avg_confidence
+   FROM public.normalized_events
+  GROUP BY (public.time_bucket('1 day'::interval, "timestamp")), source, ai_category, severity
+  WITH NO DATA;
+
+
+ALTER MATERIALIZED VIEW public.events_by_machine_daily OWNER TO logparser;
+
+--
+-- Name: parse_jobs; Type: TABLE; Schema: public; Owner: logparser
+--
+
+CREATE TABLE public.parse_jobs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    file_name text NOT NULL,
+    file_size_bytes bigint,
+    minio_raw_key text,
+    detected_format public.log_format_type,
+    status text DEFAULT 'PENDING'::text NOT NULL,
+    dedup_key text,
+    is_duplicate boolean DEFAULT false,
+    total_events integer DEFAULT 0,
+    parsed_events integer DEFAULT 0,
+    hot_events integer DEFAULT 0,
+    cold_events integer DEFAULT 0,
+    review_events integer DEFAULT 0,
+    deadletter_events integer DEFAULT 0,
+    detection_ms integer,
+    extraction_ms integer,
+    normalization_ms integer,
+    routing_ms integer,
+    error_message text,
+    error_stage text
+);
+
+
+ALTER TABLE public.parse_jobs OWNER TO logparser;
+
+--
+-- Name: raw_logs; Type: TABLE; Schema: public; Owner: logparser
+--
+
+CREATE TABLE public.raw_logs (
+    job_id uuid NOT NULL,
+    "timestamp" timestamp with time zone NOT NULL,
+    file_name text NOT NULL,
+    file_format text NOT NULL,
+    raw_content text NOT NULL,
+    file_hash character varying(64),
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+);
+
+
+ALTER TABLE public.raw_logs OWNER TO logparser;
+
+--
+-- Name: review_queue_status; Type: TABLE; Schema: public; Owner: logparser
+--
+
+CREATE TABLE public.review_queue_status (
+    id bigint NOT NULL,
+    job_id uuid NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    reviewer_notes text,
+    reviewed_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+);
+
+
+ALTER TABLE public.review_queue_status OWNER TO logparser;
+
+--
+-- Name: review_queue_status_id_seq; Type: SEQUENCE; Schema: public; Owner: logparser
+--
+
+CREATE SEQUENCE public.review_queue_status_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.review_queue_status_id_seq OWNER TO logparser;
+
+--
+-- Name: review_queue_status_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: logparser
+--
+
+ALTER SEQUENCE public.review_queue_status_id_seq OWNED BY public.review_queue_status.id;
+
+
+--
+-- Name: _hyper_6_1_chunk requires_review; Type: DEFAULT; Schema: _timescaledb_internal; Owner: logparser
+--
+
+ALTER TABLE ONLY _timescaledb_internal._hyper_6_1_chunk ALTER COLUMN requires_review SET DEFAULT false;
+
+
+--
+-- Name: _hyper_6_1_chunk created_at; Type: DEFAULT; Schema: _timescaledb_internal; Owner: logparser
+--
+
+ALTER TABLE ONLY _timescaledb_internal._hyper_6_1_chunk ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP;
+
+
+--
+-- Name: _hyper_6_2_chunk requires_review; Type: DEFAULT; Schema: _timescaledb_internal; Owner: logparser
+--
+
+ALTER TABLE ONLY _timescaledb_internal._hyper_6_2_chunk ALTER COLUMN requires_review SET DEFAULT false;
+
+
+--
+-- Name: _hyper_6_2_chunk created_at; Type: DEFAULT; Schema: _timescaledb_internal; Owner: logparser
+--
+
+ALTER TABLE ONLY _timescaledb_internal._hyper_6_2_chunk ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP;
+
+
+--
+-- Name: event_routing id; Type: DEFAULT; Schema: public; Owner: logparser
+--
+
+ALTER TABLE ONLY public.event_routing ALTER COLUMN id SET DEFAULT nextval('public.event_routing_id_seq'::regclass);
+
+
+--
+-- Name: review_queue_status id; Type: DEFAULT; Schema: public; Owner: logparser
+--
+
+ALTER TABLE ONLY public.review_queue_status ALTER COLUMN id SET DEFAULT nextval('public.review_queue_status_id_seq'::regclass);
+
+
+--
+-- Data for Name: hypertable; Type: TABLE DATA; Schema: _timescaledb_catalog; Owner: logparser
+--
+
+COPY _timescaledb_catalog.hypertable (id, schema_name, table_name, associated_schema_name, associated_table_prefix, num_dimensions, chunk_sizing_func_schema, chunk_sizing_func_name, chunk_target_size, compression_state, compressed_hypertable_id, status) FROM stdin;
+2	_timescaledb_internal	_materialized_hypertable_2	_timescaledb_internal	_hyper_2	1	_timescaledb_functions	calculate_chunk_interval	0	0	\N	0
+3	_timescaledb_internal	_materialized_hypertable_3	_timescaledb_internal	_hyper_3	1	_timescaledb_functions	calculate_chunk_interval	0	0	\N	0
+4	_timescaledb_internal	_compressed_hypertable_4	_timescaledb_internal	_hyper_4	0	_timescaledb_functions	calculate_chunk_interval	0	2	\N	0
+1	public	log_events	_timescaledb_internal	_hyper_1	1	_timescaledb_functions	calculate_chunk_interval	0	1	4	0
+5	public	raw_logs	_timescaledb_internal	_hyper_5	1	_timescaledb_functions	calculate_chunk_interval	0	0	\N	0
+6	public	normalized_events	_timescaledb_internal	_hyper_6	1	_timescaledb_functions	calculate_chunk_interval	0	0	\N	0
+\.
+
+
+--
+-- Data for Name: bgw_job; Type: TABLE DATA; Schema: _timescaledb_catalog; Owner: logparser
+--
+
+COPY _timescaledb_catalog.bgw_job (id, application_name, schedule_interval, max_runtime, max_retries, retry_period, proc_schema, proc_name, owner, scheduled, fixed_schedule, initial_start, hypertable_id, config, check_schema, check_name, timezone) FROM stdin;
+1000	Refresh Continuous Aggregate Policy [1000]	00:05:00	00:00:00	-1	00:05:00	_timescaledb_functions	policy_refresh_continuous_aggregate	logparser	t	f	\N	2	{"end_offset": "00:05:00", "start_offset": "01:00:00", "mat_hypertable_id": 2}	_timescaledb_functions	policy_refresh_continuous_aggregate_check	\N
+1001	Refresh Continuous Aggregate Policy [1001]	01:00:00	00:00:00	-1	01:00:00	_timescaledb_functions	policy_refresh_continuous_aggregate	logparser	t	f	\N	3	{"end_offset": "01:00:00", "start_offset": "03:00:00", "mat_hypertable_id": 3}	_timescaledb_functions	policy_refresh_continuous_aggregate_check	\N
+1002	Columnstore Policy [1002]	00:30:00	00:00:00	-1	01:00:00	_timescaledb_functions	policy_compression	logparser	t	f	\N	1	{"hypertable_id": 1, "compress_after": "7 days"}	_timescaledb_functions	policy_compression_check	\N
+1003	Retention Policy [1003]	1 day	00:05:00	-1	00:05:00	_timescaledb_functions	policy_retention	logparser	t	f	\N	1	{"drop_after": "90 days", "hypertable_id": 1}	_timescaledb_functions	policy_retention_check	\N
+1004	Retention Policy [1004]	1 day	00:05:00	-1	00:05:00	_timescaledb_functions	policy_retention	logparser	t	f	\N	5	{"drop_after": "30 days", "hypertable_id": 5}	_timescaledb_functions	policy_retention_check	\N
+1005	Retention Policy [1005]	1 day	00:05:00	-1	00:05:00	_timescaledb_functions	policy_retention	logparser	t	f	\N	6	{"drop_after": "7 days", "hypertable_id": 6}	_timescaledb_functions	policy_retention_check	\N
+\.
+
+
+--
+-- Data for Name: chunk; Type: TABLE DATA; Schema: _timescaledb_catalog; Owner: logparser
+--
+
+COPY _timescaledb_catalog.chunk (id, hypertable_id, schema_name, table_name, compressed_chunk_id, status, osm_chunk, creation_time) FROM stdin;
+1	6	_timescaledb_internal	_hyper_6_1_chunk	\N	0	f	2026-04-18 16:49:46.86865+00
+2	6	_timescaledb_internal	_hyper_6_2_chunk	\N	0	f	2026-04-23 00:58:44.576724+00
+\.
+
+
+--
+-- Data for Name: chunk_column_stats; Type: TABLE DATA; Schema: _timescaledb_catalog; Owner: logparser
+--
+
+COPY _timescaledb_catalog.chunk_column_stats (id, hypertable_id, chunk_id, column_name, range_start, range_end, valid) FROM stdin;
+\.
+
+
+--
+-- Data for Name: dimension; Type: TABLE DATA; Schema: _timescaledb_catalog; Owner: logparser
+--
+
+COPY _timescaledb_catalog.dimension (id, hypertable_id, column_name, column_type, aligned, num_slices, partitioning_func_schema, partitioning_func, interval_length, compress_interval_length, integer_now_func_schema, integer_now_func) FROM stdin;
+1	1	event_time	timestamp with time zone	t	\N	\N	\N	3600000000	\N	\N	\N
+2	2	bucket	timestamp with time zone	t	\N	\N	\N	36000000000	\N	\N	\N
+3	3	bucket	timestamp with time zone	t	\N	\N	\N	36000000000	\N	\N	\N
+4	5	timestamp	timestamp with time zone	t	\N	\N	\N	604800000000	\N	\N	\N
+5	6	timestamp	timestamp with time zone	t	\N	\N	\N	604800000000	\N	\N	\N
+\.
+
+
+--
+-- Data for Name: dimension_slice; Type: TABLE DATA; Schema: _timescaledb_catalog; Owner: logparser
+--
+
+COPY _timescaledb_catalog.dimension_slice (id, dimension_id, range_start, range_end) FROM stdin;
+1	5	1776297600000000	1776902400000000
+2	5	1776902400000000	1777507200000000
+\.
+
+
+--
+-- Data for Name: chunk_constraint; Type: TABLE DATA; Schema: _timescaledb_catalog; Owner: logparser
+--
+
+COPY _timescaledb_catalog.chunk_constraint (chunk_id, dimension_slice_id, constraint_name, hypertable_constraint_name) FROM stdin;
+1	1	constraint_1	\N
+1	\N	1_1_normalized_events_pkey	normalized_events_pkey
+2	2	constraint_2	\N
+2	\N	2_2_normalized_events_pkey	normalized_events_pkey
+\.
+
+
+--
+-- Data for Name: compression_chunk_size; Type: TABLE DATA; Schema: _timescaledb_catalog; Owner: logparser
+--
+
+COPY _timescaledb_catalog.compression_chunk_size (chunk_id, compressed_chunk_id, uncompressed_heap_size, uncompressed_toast_size, uncompressed_index_size, compressed_heap_size, compressed_toast_size, compressed_index_size, numrows_pre_compression, numrows_post_compression, numrows_frozen_immediately) FROM stdin;
+\.
+
+
+--
+-- Data for Name: compression_settings; Type: TABLE DATA; Schema: _timescaledb_catalog; Owner: logparser
+--
+
+COPY _timescaledb_catalog.compression_settings (relid, compress_relid, segmentby, orderby, orderby_desc, orderby_nullsfirst, index) FROM stdin;
+public.log_events	\N	{tool_id,severity}	\N	\N	\N	\N
+\.
+
+
+--
+-- Data for Name: continuous_agg; Type: TABLE DATA; Schema: _timescaledb_catalog; Owner: logparser
+--
+
+COPY _timescaledb_catalog.continuous_agg (mat_hypertable_id, raw_hypertable_id, parent_mat_hypertable_id, user_view_schema, user_view_name, partial_view_schema, partial_view_name, direct_view_schema, direct_view_name, materialized_only) FROM stdin;
+2	1	\N	public	events_5min	_timescaledb_internal	_partial_view_2	_timescaledb_internal	_direct_view_2	t
+3	1	\N	public	events_1hour	_timescaledb_internal	_partial_view_3	_timescaledb_internal	_direct_view_3	t
+\.
+
+
+--
+-- Data for Name: continuous_aggs_bucket_function; Type: TABLE DATA; Schema: _timescaledb_catalog; Owner: logparser
+--
+
+COPY _timescaledb_catalog.continuous_aggs_bucket_function (mat_hypertable_id, bucket_func, bucket_width, bucket_origin, bucket_offset, bucket_timezone, bucket_fixed_width) FROM stdin;
+2	public.time_bucket(interval,timestamp with time zone)	00:05:00	\N	\N	\N	t
+3	public.time_bucket(interval,timestamp with time zone)	01:00:00	\N	\N	\N	t
+\.
+
+
+--
+-- Data for Name: continuous_aggs_hypertable_invalidation_log; Type: TABLE DATA; Schema: _timescaledb_catalog; Owner: logparser
+--
+
+COPY _timescaledb_catalog.continuous_aggs_hypertable_invalidation_log (hypertable_id, lowest_modified_value, greatest_modified_value) FROM stdin;
+\.
+
+
+--
+-- Data for Name: continuous_aggs_invalidation_threshold; Type: TABLE DATA; Schema: _timescaledb_catalog; Owner: logparser
+--
+
+COPY _timescaledb_catalog.continuous_aggs_invalidation_threshold (hypertable_id, watermark) FROM stdin;
+1	1776909000000000
+\.
+
+
+--
+-- Data for Name: continuous_aggs_jobs_refresh_ranges; Type: TABLE DATA; Schema: _timescaledb_catalog; Owner: logparser
+--
+
+COPY _timescaledb_catalog.continuous_aggs_jobs_refresh_ranges (materialization_id, start_range, end_range, pid, job_id, created_at) FROM stdin;
+\.
+
+
+--
+-- Data for Name: continuous_aggs_materialization_invalidation_log; Type: TABLE DATA; Schema: _timescaledb_catalog; Owner: logparser
+--
+
+COPY _timescaledb_catalog.continuous_aggs_materialization_invalidation_log (materialization_id, lowest_modified_value, greatest_modified_value) FROM stdin;
+2	-9223372036854775808	1776513899999999
+3	1776668400000000	1776841199999999
+2	1776674700000000	1776846899999999
+3	-9223372036854775808	1776509999999999
+2	1776909000000000	9223372036854775807
+3	1776535200000000	1776538799999999
+2	1776541500000000	1776544199999999
+3	1776560400000000	1776563999999999
+2	1776600000000000	1776600299999999
+2	1776521700000000	1776521999999999
+3	1776571200000000	1776574799999999
+2	1776578100000000	1776578699999999
+3	1776603600000000	1776646799999999
+2	1776610800000000	1776650699999999
+3	1776852000000000	1776855599999999
+3	1776877200000000	1776880799999999
+3	1776902400000000	9223372036854775807
+\.
+
+
+--
+-- Data for Name: continuous_aggs_materialization_ranges; Type: TABLE DATA; Schema: _timescaledb_catalog; Owner: logparser
+--
+
+COPY _timescaledb_catalog.continuous_aggs_materialization_ranges (materialization_id, lowest_modified_value, greatest_modified_value) FROM stdin;
+\.
+
+
+--
+-- Data for Name: continuous_aggs_watermark; Type: TABLE DATA; Schema: _timescaledb_catalog; Owner: logparser
+--
+
+COPY _timescaledb_catalog.continuous_aggs_watermark (mat_hypertable_id, watermark) FROM stdin;
+2	-210866803200000000
+3	-210866803200000000
+\.
+
+
+--
+-- Data for Name: metadata; Type: TABLE DATA; Schema: _timescaledb_catalog; Owner: logparser
+--
+
+COPY _timescaledb_catalog.metadata (key, value, include_in_telemetry) FROM stdin;
+install_timestamp	2026-04-18 13:01:18.814909+00	t
+timescaledb_version	2.26.3	f
+exported_uuid	87571948-a518-46f8-8949-d6c0338f7e57	t
+\.
+
+
+--
+-- Data for Name: tablespace; Type: TABLE DATA; Schema: _timescaledb_catalog; Owner: logparser
+--
+
+COPY _timescaledb_catalog.tablespace (id, hypertable_id, tablespace_name) FROM stdin;
+\.
+
+
+--
+-- Data for Name: _compressed_hypertable_4; Type: TABLE DATA; Schema: _timescaledb_internal; Owner: logparser
+--
+
+COPY _timescaledb_internal._compressed_hypertable_4  FROM stdin;
+\.
+
+
+--
+-- Data for Name: _hyper_6_1_chunk; Type: TABLE DATA; Schema: _timescaledb_internal; Owner: logparser
+--
+
+COPY _timescaledb_internal._hyper_6_1_chunk (job_id, "timestamp", source, event_type, severity, message, ai_category, ai_root_cause, ai_recommended_action, confidence_score, requires_review, review_reason, created_at) FROM stdin;
+c41bd901-0f54-4832-ab96-3ff8c9dd6456	2026-04-18 16:49:46.491737+00	test-machine-p0	alarm	CRITICAL	[TEST] Fire alarm activated in zone 3	fire	Fire detected near conveyor belt	Evacuate zone 3 immediately	0.99	f		2026-04-18 16:49:46.851226+00
+1d7e033b-76ef-4893-9085-78b3eb009780	2026-04-18 16:49:56.327244+00	test-machine-p0	alarm	CRITICAL	[TEST] Fire alarm activated in zone 3	fire	Fire detected near conveyor belt	Evacuate zone 3 immediately	0.99	f		2026-04-18 16:49:56.336032+00
+610cc54d-0e4b-44ed-91e5-2406eb972350	2026-04-18 16:49:56.331228+00	test-machine-p1	sensor_failure	ERROR	[TEST] Temperature sensor malfunction	electrical	Thermal sensor overcurrent	Shut down and replace sensor	0.88	f		2026-04-18 16:49:56.348242+00
+43a82b99-97d5-4783-932a-b01634ccde81	2026-04-18 16:49:56.354065+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #0 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+c79f47ef-7471-46b6-b128-4bf687e5d31d	2026-04-18 16:49:56.354087+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #1 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+463f9b13-6709-422a-8580-8a5ba9e68d43	2026-04-18 16:49:56.354094+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #2 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+1fd638b8-e403-47cd-b42e-874e39a10fca	2026-04-18 16:49:56.3541+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #3 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+51bd6927-6496-4a2d-895d-9c341caa54d5	2026-04-18 16:49:56.354105+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #4 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+01909c0d-0948-45f3-9fa5-0a89b0830973	2026-04-18 16:49:56.354111+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #5 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+8f2d0d70-dbf1-4ee1-b7a0-6cb695ce14eb	2026-04-18 16:49:56.354148+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #6 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+418b4dca-0efa-4469-b99d-62c968c69980	2026-04-18 16:49:56.354157+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #7 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+1e1d9af4-20da-4faa-b0a4-3c33333821d8	2026-04-18 16:49:56.354162+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #8 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+5b27e0e7-d128-441d-9919-a948f4407f05	2026-04-18 16:49:56.354167+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #9 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+e64bbaad-e854-4a3e-9dfc-6d02f3fa824d	2026-04-18 16:49:56.354172+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #10 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+3ae1c6dc-449f-477d-8981-6e09f9a08245	2026-04-18 16:49:56.354177+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #11 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+be720ef5-e451-4c88-b475-9e43695d8680	2026-04-18 16:49:56.354182+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #12 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+2ceebf47-18fd-41ae-aeb8-8106825799ea	2026-04-18 16:49:56.354187+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #13 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+fe5d23f0-c511-4bf3-a8b8-130708b3c5ee	2026-04-18 16:49:56.354191+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #14 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+6cbbc5cb-8a14-43aa-9ffd-eb38ce66ed6f	2026-04-18 16:49:56.354196+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #15 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+321b2285-f23f-4211-9c8d-4643d3b9ae16	2026-04-18 16:49:56.354201+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #16 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+f8267cf7-9f88-4555-aec6-b6911cc10374	2026-04-18 16:49:56.354205+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #17 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+7cf1b940-8fc7-4922-b6db-c024a5abf718	2026-04-18 16:49:56.35421+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #18 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+67a5d781-d39d-478a-beb4-4edc408a8e29	2026-04-18 16:49:56.354215+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #19 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+5bbc0a67-8c6d-4d22-ad87-1e32f22c09f0	2026-04-18 16:49:56.354219+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #20 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+b139db14-1e0a-4bc8-a038-7b86e1753d94	2026-04-18 16:49:56.354224+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #21 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+d9bafe5c-389d-4e4e-994b-f4147167ef29	2026-04-18 16:49:56.354229+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #22 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+8a6e41fb-bf76-455e-b18b-46d2b480a07c	2026-04-18 16:49:56.354233+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #23 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+f6b92514-557c-4e9e-af17-87576266b123	2026-04-18 16:49:56.354238+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #24 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+9b569245-bb12-467f-ad71-839eb928d887	2026-04-18 16:49:56.354243+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #25 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+0fffa613-cbf3-4e8f-bb30-f23307a9f493	2026-04-18 16:49:56.354247+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #26 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+7665594d-db68-4e10-9cda-9501c4e57531	2026-04-18 16:49:56.354252+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #27 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+cd12f88f-430f-4f2c-939a-dec3c31764f2	2026-04-18 16:49:56.354257+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #28 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+1a93a133-f4ea-4375-b4f6-d87e3a047d43	2026-04-18 16:49:56.354261+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #29 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+1535d238-0305-464b-ac7f-af7102b2ed17	2026-04-18 16:49:56.354266+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #30 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+a8177f3a-e70b-45ac-9133-b1c7a10b2233	2026-04-18 16:49:56.354275+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #32 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+279754ad-cd18-4b16-9d78-e5429e5a93cd	2026-04-18 16:49:56.354284+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #34 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+f7f7328f-047a-4e0c-8fde-94f0716d34c0	2026-04-18 16:49:56.354298+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #37 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+dd516ea0-23e8-445a-9656-5099812ced2f	2026-04-18 16:49:56.354308+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #39 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+45375894-2908-411c-a6b9-f809195e7692	2026-04-18 16:49:56.35427+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #31 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+09c503e8-8811-44e6-aea6-813446715984	2026-04-18 16:49:56.354289+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #35 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+d6e7e63b-1f60-4a95-880a-9ec3de4e4b8c	2026-04-18 16:49:56.354294+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #36 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+a7f605ac-2146-4185-92bf-b3a5bb7909ee	2026-04-18 16:49:56.354312+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #40 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+cc4b8cc7-acc0-4ca4-be6d-0143b8ba61cc	2026-04-18 16:49:56.354317+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #41 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+07fda739-4afd-475a-bc5b-1ad3f1e47f7a	2026-04-18 16:49:56.354322+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #42 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+4d86b199-2863-48a5-b4e0-0e019da79c63	2026-04-18 16:49:56.354279+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #33 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+a3b8ed04-e2c1-4b88-a3d8-1b0b35fc7984	2026-04-18 16:49:56.354303+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #38 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+6061eeee-7e19-4cd1-8c44-eceb91c0b044	2026-04-18 16:49:56.354327+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #43 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+95960881-6b6c-4f28-b57d-9e4b75c4dd86	2026-04-18 16:49:56.354331+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #44 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+fbb801cc-9c1e-4aab-9495-1a4f1f10a41e	2026-04-18 16:49:56.354336+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #45 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+31535c22-1a65-4a03-9856-6fa17ab85041	2026-04-18 16:49:56.35434+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #46 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+f5093c0e-4dc2-4e69-94a4-8673649dda27	2026-04-18 16:49:56.354345+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #47 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+2cda9ae0-93d4-44e1-a0e6-3aab86a8fae4	2026-04-18 16:49:56.35435+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #48 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+bd0286b8-d952-425c-b2d5-ce29a84e4fb7	2026-04-18 16:49:56.354354+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #49 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+f7bc7540-cf4f-4872-836a-2fd38b4f1deb	2026-04-18 16:49:56.354359+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #50 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+8212547f-e9c7-4bc2-9f66-9c88fbb2135b	2026-04-18 16:49:56.354363+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #51 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+e643ce55-5893-4d36-b016-c33e716c3102	2026-04-18 16:49:56.354369+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #52 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+244a894a-8fa2-407d-b6f3-72ce34eab055	2026-04-18 16:49:56.354373+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #53 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+07a8b994-04aa-4e47-a6bd-c48544238530	2026-04-18 16:49:56.354378+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #54 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+c02f5d4f-e47d-491a-a4a7-4afd623ead75	2026-04-18 16:49:56.354383+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #55 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+1d102ae9-1fe6-47c9-b8be-262960aec099	2026-04-18 16:49:56.354387+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #56 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+586da642-d729-404f-876c-22aabdf90432	2026-04-18 16:49:56.354392+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #57 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+231019e1-d7a5-4a25-b252-52ab0baf6139	2026-04-18 16:49:56.354396+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #58 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+63edbf2a-ba7f-4250-ba75-786f082229e1	2026-04-18 16:49:56.354401+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #59 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+6fb287ba-331b-49fb-bb99-7dbbbb050316	2026-04-18 16:49:56.354405+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #60 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+51f34b55-45b0-4150-9e98-8dafd2c5e2b8	2026-04-18 16:49:56.35441+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #61 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+c3dd0941-c0ec-49bb-9c23-b7671efb1d27	2026-04-18 16:49:56.354414+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #62 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+4ce347d5-2b86-4e37-a416-342892282bca	2026-04-18 16:49:56.354419+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #63 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+89358e73-2fab-4354-a0c3-2be20161d578	2026-04-18 16:49:56.354423+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #64 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+bc2deb7d-bb32-432c-9599-720e8831586a	2026-04-18 16:49:56.354429+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #65 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+8709e1a4-4ec0-4ee9-84ab-70b9cd6f8bfa	2026-04-18 16:49:56.354433+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #66 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+ba50cc2b-77f2-4224-a48a-534352bc201c	2026-04-18 16:49:56.354438+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #67 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+a713f5d8-c83c-42dd-8435-f8baba304d75	2026-04-18 16:49:56.354451+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #70 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+83c1c139-1ad8-4ba9-b3b2-703d4863a08e	2026-04-18 16:49:56.354456+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #71 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+6d121239-c3bf-4163-88b4-4c1e056c48fe	2026-04-18 16:49:56.354442+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #68 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+3144ca5a-5f6c-4ac3-815c-fb98800c497f	2026-04-18 16:49:56.354447+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #69 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+2aaa6cd0-5296-4080-9fd0-43627f8663c5	2026-04-18 16:49:56.35446+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #72 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+3602a376-bd7d-47b8-92e0-480b8da68778	2026-04-18 16:49:56.354465+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #73 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+fe999160-a726-45c5-8023-d83b01fc8e86	2026-04-18 16:49:56.354469+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #74 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+6174e807-f525-4d52-a2ef-7bc745e2e62a	2026-04-18 16:49:56.354474+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #75 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+8c3c7dfd-0298-45d0-aff9-2c281583f345	2026-04-18 16:49:56.354478+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #76 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+ff7fc338-3279-4ce7-aa58-bd05bde55609	2026-04-18 16:49:56.354484+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #77 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+272652eb-ff58-4d51-b8ee-23291da50888	2026-04-18 16:49:56.354488+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #78 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+10646ae3-4206-4c83-b4c4-ed2de633dc65	2026-04-18 16:49:56.354493+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #79 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+4621e491-e2a3-4b27-bce9-c7c9f4cc8045	2026-04-18 16:49:56.354497+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #80 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+b01e74e4-5c5e-45fe-99b7-df426952c734	2026-04-18 16:49:56.354502+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #81 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+7f32742c-d0c6-4938-86d8-129e8a19db61	2026-04-18 16:49:56.354506+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #82 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+9e36bb35-478b-40da-8280-09bf3f49b819	2026-04-18 16:49:56.354511+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #83 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+f016e85e-8a85-4c49-bc5f-3d53fbba3f46	2026-04-18 16:49:56.354515+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #84 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+afd32b8c-5779-46b9-834e-21c46cd06d15	2026-04-18 16:49:56.35452+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #85 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+75cabda6-ac3b-462f-aaec-2faf3a9cdfee	2026-04-18 16:49:56.354524+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #86 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+2303b692-047e-46df-8d83-ba4a6db42586	2026-04-18 16:49:56.354529+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #87 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+787c95bf-5abf-4603-820b-aa3363c8c152	2026-04-18 16:49:56.354533+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #88 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+0e888261-5ef6-46bd-a777-aaa1885e8f9e	2026-04-18 16:49:56.354538+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #89 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+57ddc802-f167-43ba-8c96-81d25bf88549	2026-04-18 16:49:56.354543+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #90 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+2f6beee6-a868-4ec9-b3d8-ce5e4b2c52fd	2026-04-18 16:49:56.354548+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #91 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+2140b760-e1a1-4594-9496-65f87126aa89	2026-04-18 16:49:56.354552+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #92 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+264487b8-2914-4e7b-afe9-2786f2a7f423	2026-04-18 16:49:56.354563+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #93 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+be26c2d0-ae49-44c3-ad16-ed3b1ddd2f2d	2026-04-18 16:49:56.354568+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #94 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+cc75ca98-f914-4d53-97c8-ce4b573f7e56	2026-04-18 16:49:56.354573+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #95 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+a3cc7006-949f-417a-93f6-30665362a939	2026-04-18 16:49:56.354577+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #96 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+721a2f3a-3dff-4913-acb3-9300f973e2c4	2026-04-18 16:49:56.354582+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #97 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+e93f28ec-d5db-44b4-9162-cbc17c659e24	2026-04-18 16:49:56.354586+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #98 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+d54df479-3702-4bfd-9d94-d62eb94cd617	2026-04-18 16:49:56.354591+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #99 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 16:49:56.497727+00
+27ddf1b3-68b4-444a-99e5-c113e91626b8	2026-04-18 16:50:11.55732+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (low_confidence)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 16:50:11.588998+00
+fb2bca43-803f-4d5e-8d8d-4ff620c6149b	2026-04-18 16:50:11.557346+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (low_confidence)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 16:50:11.607811+00
+326d94f1-0db4-469d-8b2f-c37f8c4945f6	2026-04-18 16:50:11.557354+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (low_confidence)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 16:50:11.60928+00
+011cd0ae-02dc-4809-b9e0-8dcf76ea5bbe	2026-04-18 16:50:19.629903+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_0)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 16:50:19.646505+00
+a66a582d-13e4-4987-aff5-1a05560ff53e	2026-04-18 16:50:19.637663+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_1)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 16:50:19.662148+00
+8925a539-a6ad-44eb-b943-4438e6197c2e	2026-04-18 16:50:19.640023+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_2)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 16:50:19.66427+00
+f1293c76-b4d7-4ba2-9f4d-7404f4f9cbd5	2026-04-18 16:50:19.64188+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_3)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 16:50:19.665865+00
+bcdb47d7-19a5-451a-b5ce-c47b2e6782c1	2026-04-18 16:50:19.643717+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_4)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 16:50:19.667396+00
+9c614c4e-04d0-42be-ab15-854e7f7f695f	2026-04-18 16:50:19.64597+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_5)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 16:50:19.66839+00
+7917096e-38d2-4624-8633-f08e18445db8	2026-04-18 16:50:19.649561+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_6)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 16:50:19.669652+00
+2f1f226c-161c-4acc-b5df-b9dfc94512f4	2026-04-18 16:50:19.651793+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_7)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 16:50:19.670833+00
+339b4406-48f8-472f-88ba-875ff08c36f8	2026-04-18 16:50:19.656317+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_8)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 16:50:19.672425+00
+1169bec9-fd34-44ea-a1f0-0e0255ea42cf	2026-04-18 16:50:19.659345+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_9)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 16:50:19.673478+00
+e49863bd-037a-4d93-bcec-1d37d4e42f40	2026-04-18 17:18:54.380092+00	test-machine-p0	alarm	CRITICAL	[TEST] Fire alarm activated in zone 3	fire	Fire detected near conveyor belt	Evacuate zone 3 immediately	0.99	f		2026-04-18 17:18:54.472226+00
+26e7b623-7c2f-43e7-9d08-00fc47acb399	2026-04-18 17:19:03.985565+00	test-machine-p0	alarm	CRITICAL	[TEST] Fire alarm activated in zone 3	fire	Fire detected near conveyor belt	Evacuate zone 3 immediately	0.99	f		2026-04-18 17:19:03.99638+00
+b77d15ef-bdf9-47ca-a125-ffc4f4089907	2026-04-18 17:19:03.996229+00	test-machine-p1	sensor_failure	ERROR	[TEST] Temperature sensor malfunction	electrical	Thermal sensor overcurrent	Shut down and replace sensor	0.88	f		2026-04-18 17:19:04.006999+00
+0ff52a70-5ff2-441e-bfe0-cf30ad852487	2026-04-18 17:19:04.012405+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #0 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+71296787-080a-42bb-8409-ad7bd6809f8a	2026-04-18 17:19:04.012463+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #3 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+86087c5e-8de7-47cd-ae93-5c7838a9bf71	2026-04-18 17:19:04.012439+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #1 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+17fc7d47-acb5-40c5-b8b7-a4c2b14efa69	2026-04-18 17:19:04.012482+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #5 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+e5a9d0ea-1ac1-4efc-8919-6c77b94ecb02	2026-04-18 17:19:04.012492+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #6 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+86753116-d181-4d64-ab38-23b54003fe74	2026-04-18 17:19:04.012453+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #2 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+6767653a-0906-4645-bb96-f81be8ddc549	2026-04-18 17:19:04.012473+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #4 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+e81efd84-b219-4ee5-aa98-fd405559cdcd	2026-04-18 17:19:04.012502+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #7 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+fa7e6777-b6f4-421a-9762-19a1489549d2	2026-04-18 17:19:04.012511+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #8 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+bc15ab81-6298-413b-bf9f-f1162e3ec5dc	2026-04-18 17:19:04.01252+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #9 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+a7d4a23a-d5e3-4206-ba93-819646d84b96	2026-04-18 17:19:04.01258+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #10 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+aa013c07-ac41-4f39-af56-d96cb5250ffd	2026-04-18 17:19:04.012718+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #11 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+a2776d3e-0fe5-4262-a56e-ed24077e1cb2	2026-04-18 17:19:04.012781+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #12 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+e0968e25-80d5-4597-af29-87e6e4e2cd59	2026-04-18 17:19:04.012792+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #13 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+b3334168-fcda-4b3e-a8f0-e360d13b2453	2026-04-18 17:19:04.012797+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #14 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+491383d1-7aeb-40a4-8f7f-2c36bf193b6e	2026-04-18 17:19:04.012801+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #15 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+307222cb-3f87-42d9-b297-306fd03a7b73	2026-04-18 17:19:04.012805+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #16 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+cd9a4a50-c231-463d-8726-26a16e050035	2026-04-18 17:19:04.01281+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #17 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+f0df4d9b-db50-413e-9253-d27532e07166	2026-04-18 17:19:04.012814+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #18 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+f5712bda-b2a6-448e-b7bf-6e9444d905e0	2026-04-18 17:19:04.012818+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #19 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+d94b2876-d64a-40f8-a036-7d6e05bfa8b2	2026-04-18 17:19:04.012822+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #20 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+4e52bc96-b480-494b-80d3-529964784d4d	2026-04-18 17:19:04.012827+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #21 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+ffce88ea-8e57-4b51-bea3-ad63d4119534	2026-04-18 17:19:04.012831+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #22 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+717cbba5-d6d1-4444-8c68-ea7c3366bad6	2026-04-18 17:19:04.012835+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #23 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+4a0af10b-4885-4639-a4fd-fe8e7dedb726	2026-04-18 17:19:04.012839+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #24 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+b283e879-c58e-4dc3-a6e0-b947183b6c33	2026-04-18 17:19:04.012843+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #25 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+bb1f18ca-6123-427e-9dd1-59cc9543e415	2026-04-18 17:19:04.012847+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #26 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+ebc0f62e-946b-44a1-a811-96a922252236	2026-04-18 17:19:04.012851+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #27 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+5dfa93ae-01e6-4b76-8694-3557db469edf	2026-04-18 17:19:04.012856+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #28 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+48feb190-952d-49e0-9332-e6e076b3ba45	2026-04-18 17:19:04.01286+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #29 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+9db4fc09-4837-414f-ad14-eae743a03177	2026-04-18 17:19:04.012864+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #30 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+405639d3-6caa-48ae-b318-0a61e3d35bb7	2026-04-18 17:19:04.012868+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #31 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+7f6961f6-d7d2-4f73-8c79-c93d376d3de9	2026-04-18 17:19:04.012872+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #32 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+899f6413-2c7d-4547-95d8-0d2e7ac9f82f	2026-04-18 17:19:04.01288+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #34 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+52a199ad-9ec0-41cf-a7a9-85a11bc08de2	2026-04-18 17:19:04.012876+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #33 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+3bfa9ab1-386c-4193-8858-0c971f009b2e	2026-04-18 17:19:04.012884+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #35 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+8ea43f58-1ab9-4da7-a045-6fa4ee60fdf0	2026-04-18 17:19:04.012888+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #36 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+61917a0b-2a7e-4495-8137-6cb0f3301a85	2026-04-18 17:19:04.012892+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #37 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+6b2c33b3-0983-4f00-96e4-a74d241657ca	2026-04-18 17:19:04.012896+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #38 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+a5166d8b-f77d-4fa9-9206-6f17a8f7aa70	2026-04-18 17:19:04.0129+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #39 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+c958c351-e303-48aa-ac37-a1620dc97a62	2026-04-18 17:19:04.012904+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #40 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+aff30aba-4fc6-49ce-84cd-7292cf8a7624	2026-04-18 17:19:04.012908+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #41 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+20a62e60-2da1-4dc5-9794-2f76d8d284d0	2026-04-18 17:19:04.012912+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #42 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+691f002b-9f32-4a57-901b-0f4d00755d2b	2026-04-18 17:19:04.012916+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #43 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+3d8b0312-9f42-4eeb-a9f3-f967d5dc6b66	2026-04-18 17:19:04.01292+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #44 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+2e874ae1-eb2b-410a-93f9-54b3ca5149da	2026-04-18 17:19:04.012925+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #45 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+2cf2367c-b858-4042-976f-c0855154a5c1	2026-04-18 17:19:04.012929+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #46 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+354ba7b7-f998-475f-9e2a-5d78fbd0d311	2026-04-18 17:19:04.012933+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #47 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+fbb0e5e5-dc21-4950-91d9-178fdb2c6462	2026-04-18 17:19:04.012937+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #48 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+9efc5f5c-6dbc-490f-8f6b-21d8d7b3a9cb	2026-04-18 17:19:04.012941+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #49 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+cea9ee09-18db-414a-9563-572321b67cba	2026-04-18 17:19:04.012944+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #50 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+5b9ec06a-3630-4939-b928-0816753447d7	2026-04-18 17:19:04.012948+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #51 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+94dc1ab8-b360-4481-8b7b-9a4b0b1ef7ba	2026-04-18 17:19:04.012987+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #52 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+04a7362b-f8a5-4a82-a1e5-1c53916b33f4	2026-04-18 17:19:04.013005+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #53 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+6fd175ea-f5bf-44cd-89a8-df37532c14eb	2026-04-18 17:19:04.013011+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #54 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+128629be-0e1a-4e6b-a41c-a78c1c288d9b	2026-04-18 17:19:04.013016+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #55 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+c7c81120-77b7-4b0c-ac59-aac4ed144887	2026-04-18 17:19:04.01302+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #56 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+7bd36e3d-e516-4201-a65c-5a76010cb2f0	2026-04-18 17:19:04.013024+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #57 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+87bc5126-b4ff-4efd-b528-ffea29041ec6	2026-04-18 17:19:04.013029+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #58 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+fda47666-3602-4b30-9a54-f170eb3cad3e	2026-04-18 17:19:04.013033+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #59 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+2a8998c6-628c-4720-9c30-6bc7fc5df148	2026-04-18 17:19:04.013037+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #60 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+67fdc82b-4b0a-41b7-938b-cd5cf43bad4d	2026-04-18 17:19:04.013041+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #61 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+fda330a6-4e4c-4378-b543-43ffda30ab03	2026-04-18 17:19:04.013045+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #62 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+afadadc6-3090-4f28-ac34-f0f441faa9b8	2026-04-18 17:19:04.013048+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #63 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+7523c43a-768b-4c61-979c-99c47500c969	2026-04-18 17:19:04.013052+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #64 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+6a3c548f-ff7c-4e29-ac83-d483fa8c8d1a	2026-04-18 17:19:04.013057+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #65 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+991a6ad1-0ceb-4d0c-863e-a6ec9542039b	2026-04-18 17:19:04.013061+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #66 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+9f520036-4872-42c1-8d27-46655f3e72b6	2026-04-18 17:19:04.013065+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #67 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+d22b76f9-c0d4-45ba-ae46-0534d597c284	2026-04-18 17:19:04.013069+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #68 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+a98c1872-14ad-4127-8d84-fb7c9d170bf9	2026-04-18 17:19:04.013073+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #69 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+a2d806db-a49c-4afe-80ae-157fcc04a769	2026-04-18 17:19:04.013076+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #70 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+97b13a56-2497-4a64-9ba3-4d5d1b06ba21	2026-04-18 17:19:04.01308+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #71 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+e87ff614-5000-4088-9688-85daf79b25b5	2026-04-18 17:19:04.013084+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #72 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+448acfef-4e63-4b9a-990f-68859f57da54	2026-04-18 17:19:04.013088+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #73 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+0d91dfe7-49fb-4273-8643-7073cf32cf9f	2026-04-18 17:19:04.013092+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #74 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+a33dd2b2-5d7f-43d0-b27c-ab0e8c0b1e62	2026-04-18 17:19:04.013095+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #75 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+77cf780f-5d2d-412b-87a8-657524202fae	2026-04-18 17:19:04.013099+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #76 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+d8f657ad-4566-4946-b081-f2b7467b3e48	2026-04-18 17:19:04.013104+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #77 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+c4e2e0d0-44e7-4669-b068-ba06282d7fde	2026-04-18 17:19:04.013108+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #78 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+8e3b3601-aa5e-4af3-bf9b-668d35f69e41	2026-04-18 17:19:04.013112+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #79 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+ea8bbd99-290b-4c25-bddf-e441bff9eb7d	2026-04-18 17:19:04.013116+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #80 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+b791f92b-b95e-43ea-a9dc-1c848cdd86ee	2026-04-18 17:19:04.01312+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #81 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+4154d6c0-07a2-4f91-b04b-f98a90020e9a	2026-04-18 17:19:04.013123+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #82 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+f93efd23-5678-4d4d-8f0e-2c67aeab802d	2026-04-18 17:19:04.013127+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #83 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+4833d805-ed51-4440-9888-a23d7debd28d	2026-04-18 17:19:04.013132+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #84 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+9fc3451e-8830-4aa1-b50a-5a0cecac9aef	2026-04-18 17:19:04.013136+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #85 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+f10def7d-8a01-472e-af80-debd0c63ce27	2026-04-18 17:19:04.01314+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #86 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+dd052c30-437e-4623-8b48-42cdc25a01b9	2026-04-18 17:19:04.013143+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #87 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+8e938119-52c2-4f50-8caf-8a92f4115cba	2026-04-18 17:19:04.013147+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #88 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+e057942c-16a0-4b3a-8279-0782970af5f7	2026-04-18 17:19:04.013153+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #89 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+c4462076-8984-44bb-8708-ada602e92960	2026-04-18 17:19:04.013157+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #90 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+55e28f20-31c9-4b3c-8f4a-00d2909b853e	2026-04-18 17:19:04.013161+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #91 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+f24be0ef-3b05-4306-b540-1b7b1845f6cc	2026-04-18 17:19:04.013165+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #92 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+29e9b858-4a5b-4e32-b46c-8d6c4e75a16f	2026-04-18 17:19:04.013185+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #93 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+8a6e99a9-2e48-43de-89b7-e37cf818281b	2026-04-18 17:19:04.013191+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #94 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+3ec8686c-14fe-4c18-8e86-981397be3906	2026-04-18 17:19:04.013195+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #95 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+b340f898-d019-4db6-b878-cb7358652727	2026-04-18 17:19:04.0132+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #96 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+f15f599c-91bc-4149-97be-a407d630e47a	2026-04-18 17:19:04.013203+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #97 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+6beb3fe4-5716-443b-bb68-2a80b2d188fa	2026-04-18 17:19:04.013207+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #98 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+5c1aa2f1-d0df-4f71-912f-449243d8a09c	2026-04-18 17:19:04.013211+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #99 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:19:04.179636+00
+be726f2d-3828-4aff-8e13-d56542bad488	2026-04-18 17:19:19.14882+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (low_confidence)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:19:19.250548+00
+5e83ebff-3bca-4a62-903e-695f22bb26b7	2026-04-18 17:19:19.148838+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (low_confidence)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:19:19.258166+00
+a5742606-fb28-40df-a374-b13f0fbdce88	2026-04-18 17:19:19.148844+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (low_confidence)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:19:19.259167+00
+1b1ba6d3-287c-417e-897b-a12c881161ea	2026-04-18 17:19:27.19672+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_0)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:19:27.216776+00
+063f6d2a-6550-4090-8c7e-7f60a4a436be	2026-04-18 17:19:27.2061+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_1)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:19:27.232602+00
+de36c881-5735-48d9-901e-269535611157	2026-04-18 17:19:27.207389+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_2)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:19:27.236124+00
+d80a0e8b-1800-4f73-aa9f-039ece6b4700	2026-04-18 17:19:27.208474+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_3)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:19:27.238136+00
+9bc9afd3-2f15-4bbb-9ee7-0941794b6211	2026-04-18 17:19:27.209216+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_4)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:19:27.239282+00
+7869f88b-9e6d-4236-95c4-a5582eeaad82	2026-04-18 17:19:27.210233+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_5)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:19:27.240589+00
+27d1b247-9f8b-4858-a7ce-7ec9f6d76361	2026-04-18 17:19:27.212472+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_6)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:19:27.241811+00
+84abc3c6-fa74-453a-b097-6596fc17be1a	2026-04-18 17:19:27.213515+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_7)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:19:27.242835+00
+c4c58739-f795-4c60-a44a-9a9c75761fdb	2026-04-18 17:19:27.21442+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_8)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:19:27.243708+00
+55c098fb-2013-4207-a4d1-ca273e0bad0e	2026-04-18 17:19:27.2159+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_9)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:19:27.244483+00
+d050de53-e818-432f-a9f4-cacadeeffb11	2026-04-18 17:21:56.615969+00	test-machine-p0	alarm	CRITICAL	[TEST] Fire alarm activated in zone 3	fire	Fire detected near conveyor belt	Evacuate zone 3 immediately	0.99	f		2026-04-18 17:21:56.634414+00
+310ed2b7-4fac-4bcb-935e-e7cf5ab305b8	2026-04-18 17:22:06.246633+00	test-machine-p1	sensor_failure	ERROR	[TEST] Temperature sensor malfunction	electrical	Thermal sensor overcurrent	Shut down and replace sensor	0.88	f		2026-04-18 17:22:06.251747+00
+b1e9efc7-2617-4c3b-bdac-5fb19f8a550d	2026-04-18 17:22:20.275476+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #0 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+363558d7-8c5c-468c-8f32-92c26e7e6544	2026-04-18 17:22:20.275551+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #1 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+ec3578f4-c24d-426a-a09e-7bc64244de86	2026-04-18 17:22:20.275581+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #2 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+cd5e61b2-8ed2-47e8-aa90-376761db9831	2026-04-18 17:22:20.275596+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #3 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+2e9d6c69-60d5-48d1-ac7d-88b8de490a74	2026-04-18 17:22:20.275616+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #4 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+49ee3d87-7b0b-49c6-b5c5-a6aa37bf3809	2026-04-18 17:22:20.275632+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #5 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+3d058bab-a0c8-4da9-8685-0ae5ddd4ba02	2026-04-18 17:22:20.275645+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #6 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+b802af7d-4834-47a1-ae2d-8e97d16e1671	2026-04-18 17:22:20.275659+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #7 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+64b5fb1d-3457-484e-ab48-3d1c7185caa7	2026-04-18 17:22:20.275672+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #8 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+55ef0651-c2b0-4bdc-97ac-700322d4c17a	2026-04-18 17:22:20.275685+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #9 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+f8ffd5e2-8485-4c50-8fb4-8d4ca281a803	2026-04-18 17:22:20.275699+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #10 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+86b7d5d2-c326-49a9-b619-29514ca00dc6	2026-04-18 17:22:20.275711+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #11 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+b2535bf4-b848-4ff9-924d-7535e291fe31	2026-04-18 17:22:20.275728+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #12 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+fb387f0f-d423-438a-ada0-f4076f84e5d4	2026-04-18 17:22:20.275741+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #13 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+034d3959-8202-4ad7-8e9e-796e41dbfcbe	2026-04-18 17:22:20.275755+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #14 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+f7ac008b-5680-4a22-8691-79946ff30eff	2026-04-18 17:22:20.275768+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #15 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+f2060dd9-139d-4836-90f1-29773dd97d0a	2026-04-18 17:22:20.275781+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #16 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+d95a76fa-912f-4e40-b5f8-d20f68018105	2026-04-18 17:22:20.275794+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #17 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+1e95e08d-3d6f-4886-8182-545916047ab8	2026-04-18 17:22:20.275807+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #18 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+eee59f57-cd45-4682-9322-04b0baa0b340	2026-04-18 17:22:20.275819+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #19 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+21f21d0d-9d20-4417-9a30-0f03c7e9a6e4	2026-04-18 17:22:20.275831+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #20 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+2f25dc25-d272-4230-a357-dddf32f8a156	2026-04-18 17:22:20.275847+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #21 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+1ee15eb1-c8b5-4c74-8b0c-791bcc1e910e	2026-04-18 17:22:20.275861+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #22 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+bdc4795d-1de7-4080-a135-cdac25d23ad8	2026-04-18 17:22:20.275874+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #23 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+54ecc7d8-8366-407e-99fb-63172678c4ba	2026-04-18 17:22:20.275892+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #24 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+5cac09fc-53cd-4765-a0ff-3fbae3bdc2cb	2026-04-18 17:22:20.275907+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #25 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+196f9911-b481-4340-b215-88c039bee14c	2026-04-18 17:22:20.27592+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #26 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+99bc3610-2d1a-41d9-9b27-1b825457182d	2026-04-18 17:22:20.275933+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #27 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+c47a6b77-9067-4aea-b73d-d039be54e9e7	2026-04-18 17:22:20.275946+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #28 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+29a27784-b4a4-4062-902e-c14ff7a1b757	2026-04-18 17:22:20.275957+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #29 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+b3cce767-2a44-44e3-863c-f5c8e7b11816	2026-04-18 17:22:20.27597+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #30 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+c984e600-1ec2-4961-b003-112db8f445c7	2026-04-18 17:22:20.275983+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #31 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+c22b48a2-06f3-44a0-b67e-1915ebf3941c	2026-04-18 17:22:20.275995+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #32 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+9f257653-81ea-4cf6-913f-8582e3b6ac22	2026-04-18 17:22:20.276008+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #33 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+45f4dd42-a3a6-45b0-b572-b18d9fce119f	2026-04-18 17:22:20.27602+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #34 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+7a5addda-e4a1-4111-9044-2c6650a7b1a3	2026-04-18 17:22:20.276036+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #35 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+3e7d51ca-fca8-44b7-ac23-e6eb5a7ec137	2026-04-18 17:22:20.276049+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #36 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+16928cb9-3ca1-45c8-a0d3-a5d5e48889a7	2026-04-18 17:22:20.276062+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #37 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+e9bd95c1-b37b-44ef-ba45-b5fde15072ee	2026-04-18 17:22:20.276074+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #38 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+d3125111-c3b4-4760-8748-7d318d3aac1f	2026-04-18 17:22:20.276088+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #39 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+9d31e7f2-58ce-49ba-90df-49ced3f1fb84	2026-04-18 17:22:20.276103+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #40 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+fcfe8a46-de58-4a6a-acaa-4fb02ad93b04	2026-04-18 17:22:20.276139+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #41 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+fc18c1f5-b8b4-4772-bd95-ad9548ef63a4	2026-04-18 17:22:20.276156+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #42 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+93950af1-e691-4896-9583-996de47c96bd	2026-04-18 17:22:20.276168+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #43 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+894a76a1-0a54-4b9f-af48-98ca359fb0f7	2026-04-18 17:22:20.27618+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #44 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+1199e564-540c-499c-81ea-6096c83a8501	2026-04-18 17:22:20.276192+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #45 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+b5989bb8-706a-47e8-8ebe-5417c131315b	2026-04-18 17:22:20.276204+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #46 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+3f32d391-9b9f-4a56-8959-cb6f1b186d75	2026-04-18 17:22:20.276216+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #47 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+24117c83-6122-4393-b838-f58fb9d52785	2026-04-18 17:22:20.276232+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #48 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+ea37d9f2-5934-44f5-ba26-57fa7973c149	2026-04-18 17:22:20.276247+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #49 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+068d121a-cb4b-4063-879c-0bd7f014742e	2026-04-18 17:22:20.276259+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #50 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+96ba4661-601d-4bbf-a729-834c0c1c29c4	2026-04-18 17:22:20.27627+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #51 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+f3e20686-7dfd-430b-af4d-ebb0ed005ccf	2026-04-18 17:22:20.276283+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #52 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+d3efa349-b5f8-498b-b7b5-4b4bdcb31993	2026-04-18 17:22:20.276312+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #54 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+4cd2fa33-6b24-46a8-915b-b3c79b8bf04f	2026-04-18 17:22:20.276297+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #53 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+dcece257-04e9-4106-beb9-d9bac98ced55	2026-04-18 17:22:20.276323+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #55 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+40d7c306-4a45-44d5-84a1-910668a32d1c	2026-04-18 17:22:20.276334+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #56 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+379b6b1b-23c6-42ab-9498-cded98c33edb	2026-04-18 17:22:20.276346+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #57 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+f9482875-27e0-4ee9-b991-4fff30783745	2026-04-18 17:22:20.276358+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #58 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+84bc05fb-0fe5-45f5-a9c4-6a2426d13a7d	2026-04-18 17:22:20.276369+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #59 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+73b8382a-371d-4a62-90b4-d3f0300c4711	2026-04-18 17:22:20.276381+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #60 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+61f5e0a9-a7fe-4b4f-9bd8-ebcfca8b5506	2026-04-18 17:22:20.276393+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #61 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+624cf7e6-f696-4ae6-8bcf-223c46108678	2026-04-18 17:22:20.276405+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #62 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+6c55a714-ce9d-481f-919d-54b5aa3772f5	2026-04-18 17:22:20.276419+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #63 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+fd19b33c-4168-49e3-9ae2-e6f0ce77e70a	2026-04-18 17:22:20.276431+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #64 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+18a3f4b3-715d-486f-854b-409bcea50884	2026-04-18 17:22:20.276449+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #65 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+094e1577-1595-44c1-bf45-1daf1515fa56	2026-04-18 17:22:20.276461+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #66 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+cb560d0f-6fc0-4ab0-825c-abbfa3a9a05c	2026-04-18 17:22:20.276472+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #67 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+22947443-b37a-4ec1-abfc-1f546c03f44d	2026-04-18 17:22:20.276484+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #68 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+1babeb35-e23a-4676-abee-54b3d8e83d00	2026-04-18 17:22:20.276495+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #69 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+e7c8705e-72c7-4f95-9045-b72e3b8ba615	2026-04-18 17:22:20.276507+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #70 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+c0b8ea19-d3a2-46b7-8478-aa0e32ddc382	2026-04-18 17:22:20.276541+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #71 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+7cb65328-0b85-4c35-9323-596697df1cee	2026-04-18 17:22:20.276556+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #72 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+6d511b2f-a5d2-4460-9204-0f092599a77b	2026-04-18 17:22:20.276568+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #73 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+a444b3ee-3ef6-46e3-a758-00c873ac11d1	2026-04-18 17:22:20.27658+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #74 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+3b386c98-4264-4fce-ba6b-127722f5f916	2026-04-18 17:22:20.276592+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #75 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+f214fe2d-56ae-445c-b422-e501298e7162	2026-04-18 17:22:20.276603+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #76 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+c1e0d9fb-9b99-4a3d-9178-d2c4b5c44283	2026-04-18 17:22:20.276624+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #77 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+153c5e97-a6fe-4537-bdfb-a338493fe3d2	2026-04-18 17:22:20.276635+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #78 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+ef65aa4f-4269-4458-a495-b99331db2e5a	2026-04-18 17:22:20.276647+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #79 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+7596aae6-09ec-4161-a660-deb14106e090	2026-04-18 17:22:20.276659+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #80 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+3a607343-cb0e-4776-b403-4892eb3af2c9	2026-04-18 17:22:20.276673+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #81 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+57b9ed07-8e95-4541-84de-8a73e2879297	2026-04-18 17:22:20.276684+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #82 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+c4ca219e-2454-46a1-8640-78580d1689dc	2026-04-18 17:22:20.276696+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #83 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+31afb24e-92e7-432e-8f7c-0bf6f81cb9b1	2026-04-18 17:22:20.276708+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #84 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+d9a520a9-9a4c-4020-9094-84d9a545452b	2026-04-18 17:22:20.27672+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #85 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+d401911f-e199-4af9-aab7-9857b742c662	2026-04-18 17:22:20.276732+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #86 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+02b1e7d3-a9b0-45f7-ac80-2c3d93972086	2026-04-18 17:22:20.276743+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #87 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+ce63ed48-2f5d-414f-8112-d85b3f0fff72	2026-04-18 17:22:20.276754+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #88 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+8db3d763-d11e-41ed-bcab-e76156957495	2026-04-18 17:22:20.276765+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #89 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+4c755fb2-138c-41b0-a521-511da348c239	2026-04-18 17:22:20.276777+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #90 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+70e9d865-d47f-49dc-99ad-3bdb786bc4e9	2026-04-18 17:22:20.276789+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #91 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+5f31579a-bd4e-4651-9a94-96a5e57ec552	2026-04-18 17:22:20.2768+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #92 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+9e8f380c-a156-42ce-9067-85d69b697661	2026-04-18 17:22:20.276825+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #93 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+b243eb4b-031e-4659-880a-4121bca5ebd3	2026-04-18 17:22:20.27684+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #94 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+3cbc2ebf-c5f3-478f-8029-e69c05a9de6f	2026-04-18 17:22:20.276851+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #95 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+0ac42667-f977-46da-88c7-f23a7241867f	2026-04-18 17:22:20.276862+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #96 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+beac56f2-9a16-434c-89a3-dc9e2bd8888f	2026-04-18 17:22:20.276874+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #97 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+5ef79b5c-54a6-4be5-af81-868660d6d57a	2026-04-18 17:22:20.276885+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #98 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+4b39d2e3-7e30-40d4-aedb-fcf090fbbd58	2026-04-18 17:22:20.276896+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #99 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:22:20.396837+00
+78978cad-936a-4597-826f-c588d16044b7	2026-04-18 17:22:35.429115+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (low_confidence)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:22:35.444112+00
+a48b73c5-7ec1-4139-8211-5bf76580dc69	2026-04-18 17:22:35.429133+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (low_confidence)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:22:35.451771+00
+03e9bef4-f66b-4eaa-b1be-239e8377650e	2026-04-18 17:22:35.429141+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (low_confidence)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:22:35.453338+00
+5471e502-3602-470a-881e-7cb129f14990	2026-04-18 17:22:43.462633+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_0)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:22:43.473779+00
+96c9dca4-0ba0-41c6-bbdd-b6d75f26c73d	2026-04-18 17:22:43.470887+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_1)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:22:43.483257+00
+415c6d00-8f4e-46e3-a6aa-f057a54add3f	2026-04-18 17:22:43.473492+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_2)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:22:43.486526+00
+f3793e85-5ce7-442e-be54-e66ff10a9c0e	2026-04-18 17:22:43.477555+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_3)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:22:43.488935+00
+e3dcbf95-8da9-4862-945a-128aa75f510c	2026-04-18 17:22:43.48079+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_4)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:22:43.491824+00
+cbc43cab-f5aa-4d3f-af6a-a3c5d547ac98	2026-04-18 17:22:43.483151+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_5)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:22:43.495905+00
+13b21f4d-7748-47c3-8908-43fe06cec43b	2026-04-18 17:22:43.485387+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_6)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:22:43.498729+00
+e072240e-b92b-463b-93b3-c813aef36c96	2026-04-18 17:22:43.48738+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_7)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:22:43.500229+00
+31fded99-72f5-4f7f-b58d-7efca772435b	2026-04-18 17:22:43.489107+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_8)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:22:43.501642+00
+f05af4a0-6ee0-4af7-9a58-739445bfcef8	2026-04-18 17:22:43.491673+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_9)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:22:43.502971+00
+8d0bc3c5-0a16-495d-8443-2e5e905a4733	2026-04-18 17:25:48.225185+00	test-machine-p0	alarm	CRITICAL	[TEST] Fire alarm activated in zone 3	fire	Fire detected near conveyor belt	Evacuate zone 3 immediately	0.99	f		2026-04-18 17:25:48.249859+00
+3ac9fac7-c2fd-4f6c-94f8-ef749de4f969	2026-04-18 17:26:12.430459+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #0 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+355557d8-74a4-44c9-8d28-18a2cf09c1b2	2026-04-18 17:26:12.430522+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #1 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+aa4796f4-34de-4079-b9df-c29ab8a3ca4b	2026-04-18 17:26:12.430556+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #3 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+9a3b343e-9970-4881-842c-02de5a0ce5e2	2026-04-18 17:26:12.430541+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #2 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+7833ca10-65da-4a51-8d26-e5543d822067	2026-04-18 17:26:12.430581+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #4 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+f1b08cf7-3164-4794-92c5-397d4661dba8	2026-04-18 17:26:12.4306+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #5 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+d9b908f9-36c2-42c4-95e4-7bb23d8d41a9	2026-04-18 17:26:12.430615+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #6 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+c3287138-57a0-4d46-a364-a2786f1e2238	2026-04-18 17:26:12.430629+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #7 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+e0a42a02-6a3a-4a6d-b19a-25af1c8f6d72	2026-04-18 17:26:12.430643+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #8 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+e692587a-45ee-4f31-9068-894ae5070e9e	2026-04-18 17:26:12.430655+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #9 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+40e7bca9-4f13-404a-960d-d5564fea8ccf	2026-04-18 17:26:12.430668+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #10 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+0abd1ca0-9a31-4639-b5c1-d327387f0262	2026-04-18 17:26:12.430683+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #11 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+2c89787f-eed5-404f-9ff4-f804add9fedd	2026-04-18 17:26:12.430696+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #12 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+e351f43e-3c3a-4672-86d0-95cc48144447	2026-04-18 17:26:12.430709+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #13 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+f0eab5b5-0c73-4b42-8e4b-077f766a47a4	2026-04-18 17:26:12.430722+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #14 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+37a49bc8-5a63-4b67-a768-8730058e35f4	2026-04-18 17:26:12.430735+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #15 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+f94df1d1-fdc8-43c6-9f9c-88e3c106ccc6	2026-04-18 17:26:12.430748+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #16 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+b5797c95-05f9-4a26-9cf8-c68a7d7f4832	2026-04-18 17:26:12.430766+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #17 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+05976273-ba77-473c-944b-e8e540179786	2026-04-18 17:26:12.430779+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #18 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+1c15be18-6278-4a77-910e-516b4cba7df1	2026-04-18 17:26:12.430792+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #19 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+0b28fa5f-02e8-4ae8-91e1-4096d8ef7975	2026-04-18 17:26:12.430815+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #20 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+861b9c73-83b4-4b1e-bfe7-9650a6c40a15	2026-04-18 17:26:12.430829+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #21 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+edca526d-459e-4215-9b0e-98808b7fc992	2026-04-18 17:26:12.430851+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #22 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+d84a936f-7c1f-48cb-948b-25a12e570d0e	2026-04-18 17:26:12.430863+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #23 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+e7497198-35d5-465d-9dfa-c9b635153b55	2026-04-18 17:26:12.430876+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #24 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+f3448ddc-5981-4712-879a-3c4787438bd1	2026-04-18 17:26:12.430889+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #25 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+d52437f4-5655-4140-a371-bfccc7d617a9	2026-04-18 17:26:12.430902+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #26 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+bd4d09fe-f374-447b-94ff-1c739a994b77	2026-04-18 17:26:12.430914+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #27 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+e075d513-7ef7-4a02-b237-67a1638f475d	2026-04-18 17:26:12.430926+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #28 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+a78e4525-5b70-4742-9168-b28f382828ef	2026-04-18 17:26:12.430938+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #29 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+72f43249-c48c-4f36-8d64-a8ec7794c54f	2026-04-18 17:26:12.43095+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #30 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+1c3294af-3186-466b-80ba-a2c6292f4ebd	2026-04-18 17:26:12.430961+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #31 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+d7fdb5b9-69f2-4669-a9f4-3a39261b5b53	2026-04-18 17:26:12.430973+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #32 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+af78cd82-f3ab-4f9e-9a96-9ca4648a9a0b	2026-04-18 17:26:12.430998+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #33 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+dc4cd3a8-0925-4567-b15a-2241e200c2c1	2026-04-18 17:26:12.431021+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #34 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+33b356f7-b523-4510-97b0-93d8f6ee529a	2026-04-18 17:26:12.431036+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #35 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+1436bba1-07c1-423f-b70b-f5fc43b23131	2026-04-18 17:26:12.43105+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #36 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+9631f473-23cd-410b-ab9c-d4baa72e1b6c	2026-04-18 17:26:12.431064+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #37 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+b8ede123-5a82-4d70-a367-d02323cb6607	2026-04-18 17:26:12.431076+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #38 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+0f481de1-89e6-42c9-b960-88a3223541bd	2026-04-18 17:26:12.431092+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #39 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+2ac10e7d-b463-459c-822e-796701a59e7a	2026-04-18 17:26:12.431105+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #40 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+f793c02f-7ed1-4d54-b95c-5b76dc7101ba	2026-04-18 17:26:12.431121+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #41 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+b10374b1-3733-4aa6-9176-dc1492975a17	2026-04-18 17:26:12.431135+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #42 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+b6964e20-8bc9-4fbe-8f2a-896a1a6d2257	2026-04-18 17:26:12.431167+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #43 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+098e0375-23a7-4a48-9e40-e03c418c78b8	2026-04-18 17:26:12.431181+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #44 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+2478f545-97d5-42f1-a8b7-96f6bac90480	2026-04-18 17:26:12.431194+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #45 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+f4cae9b3-d40d-4933-a136-11c6810cf1f0	2026-04-18 17:26:12.431207+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #46 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+15c7be26-7767-4d18-9e13-b533d5e1d6a2	2026-04-18 17:26:12.431221+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #47 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+18366226-b140-473c-ab20-b6cf19ceeed8	2026-04-18 17:26:12.431235+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #48 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+488aaa65-dc9a-48d8-9c6e-c79d3e80206d	2026-04-18 17:26:12.431249+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #49 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+7ea35749-202a-4f64-9ce5-3e30369e3848	2026-04-18 17:26:12.431271+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #50 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+44b19643-6733-485e-96e3-f68ab8314614	2026-04-18 17:26:12.431284+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #51 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+648c2a44-1553-457c-b82f-96b2d1fe8b47	2026-04-18 17:26:12.431299+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #52 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+5f342bbc-6ba3-4321-977f-11a4077e54e3	2026-04-18 17:26:12.431311+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #53 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+7024ff26-77e8-4acb-b687-c5a25ca394e4	2026-04-18 17:26:12.431324+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #54 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+c2d1aed7-e2ca-4819-9054-f706a3ab084f	2026-04-18 17:26:12.431336+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #55 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+33c190ee-4d29-48e8-bf60-1734c0df8fb4	2026-04-18 17:26:12.431349+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #56 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+6f5da94b-dbbf-4c85-b544-e9c6204b7165	2026-04-18 17:26:12.43137+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #57 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+21c4d1bf-920f-4682-ade3-f88fa7dda361	2026-04-18 17:26:12.431383+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #58 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+668c7f72-7242-49ee-9d4b-e3116b557132	2026-04-18 17:26:12.431394+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #59 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+5c80cd10-fade-4260-997f-d3b9c6d7be89	2026-04-18 17:26:12.431414+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #60 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+0b2398f2-eaa7-4323-bcd4-e8b36875cc23	2026-04-18 17:26:12.431427+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #61 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+237455f4-c5a9-42b9-b59a-f0d28f67acae	2026-04-18 17:26:12.431439+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #62 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+9ae635b5-5dac-4a9f-9971-16718c0b1d3b	2026-04-18 17:26:12.431451+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #63 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+a9e18a43-6f93-4c9b-9172-bbcc06e99653	2026-04-18 17:26:12.431462+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #64 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+8321f081-8780-467a-a96d-2d289050a1d4	2026-04-18 17:26:12.431488+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #65 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+e55621b1-50f9-409b-9b03-2387f151b780	2026-04-18 17:26:12.431499+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #66 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+cf8c9740-1b7e-4ad5-bb29-7331ea1a9061	2026-04-18 17:26:12.431519+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #67 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+3c715741-7cbb-4251-aad3-0c1f6fa5765c	2026-04-18 17:26:12.431541+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #68 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+afb90a3a-7afe-4284-97d8-c97c2d8f8bdb	2026-04-18 17:26:12.431553+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #69 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+00286482-a2a8-4316-94c2-ac0e4a4afb8f	2026-04-18 17:26:12.431565+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #70 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+0a5f3a4d-2e43-449b-a6e9-d18e50d2f489	2026-04-18 17:26:12.431577+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #71 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+2c57c4b6-2c5b-4d67-9fe8-cbdf8fbb5e41	2026-04-18 17:26:12.431599+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #72 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+c4073e97-e236-4998-b173-4d5520cccc7b	2026-04-18 17:26:12.431612+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #73 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+120f42a4-f68a-45a1-a9e5-c896683af2b1	2026-04-18 17:26:12.431623+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #74 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+d226421c-2b38-4f66-8364-f0faf6b349cb	2026-04-18 17:26:12.431636+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #75 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+01441699-8c58-4b0d-8717-03acef8a539e	2026-04-18 17:26:12.431649+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #76 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+e0bfe2f0-d7e8-4c22-869c-42f500a50ede	2026-04-18 17:26:12.431676+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #77 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+f2305526-c264-4d60-ac67-4bd29c8dd1db	2026-04-18 17:26:12.431688+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #78 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+3a66b47c-3970-4825-aad9-89daac8b4cca	2026-04-18 17:26:12.431699+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #79 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+91580eef-762c-41f2-9f73-ea9a71d22742	2026-04-18 17:26:12.431711+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #80 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+8d8bd2fe-1de2-44ec-a865-0f0bd3adc413	2026-04-18 17:26:12.431722+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #81 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+14640b59-5294-4b54-8b22-891ac8359261	2026-04-18 17:26:12.431735+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #82 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+5f844cf6-14af-4f08-9eaa-03ab92f08597	2026-04-18 17:26:12.431747+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #83 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+1881a980-985b-4b0d-8170-e896d89d8e33	2026-04-18 17:26:12.431759+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #84 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+d78464ef-6eae-4fe5-8532-1800274ca566	2026-04-18 17:26:12.43177+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #85 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+4c6cc75c-6cf4-472e-9a70-77e2507188ef	2026-04-18 17:26:12.431781+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #86 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+f1d46cd8-0e86-4809-b2d0-9580c08dc055	2026-04-18 17:26:12.431792+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #87 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+0d3e34fd-d640-4a98-8c4b-d8591a15bd58	2026-04-18 17:26:12.431805+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #88 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+97f79d5a-fd49-4097-8436-41db7481b695	2026-04-18 17:26:12.431817+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #89 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+b1ad8776-ef12-4372-9707-80535591bd7a	2026-04-18 17:26:12.431828+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #90 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+b47cd27c-7154-42f4-9994-3762d48cf1be	2026-04-18 17:26:12.431839+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #91 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+a7d8e419-dfd9-4eff-8438-7a5be7fab447	2026-04-18 17:26:12.431852+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #92 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+f9d66986-c492-47a6-aa05-cf3ef3ba1b08	2026-04-18 17:26:12.431876+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #93 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+1706a35f-4bf2-41b6-8a52-b1ac9ebc7556	2026-04-18 17:26:12.431888+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #94 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+ea072de4-bfe7-4c66-8c0b-714a836dc572	2026-04-18 17:26:12.4319+00	test-machine-cold-0	maintenance	INFO	[TEST] Routine check #95 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+8f9f9f3e-78bc-44d2-ba91-ca05392de494	2026-04-18 17:26:12.431913+00	test-machine-cold-1	maintenance	INFO	[TEST] Routine check #96 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+3db685d6-f0fa-4b0f-818a-1173240e33c1	2026-04-18 17:26:12.431925+00	test-machine-cold-2	maintenance	INFO	[TEST] Routine check #97 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+94960ae8-42ab-467f-8026-4b4487e3ac58	2026-04-18 17:26:12.431936+00	test-machine-cold-3	maintenance	INFO	[TEST] Routine check #98 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+ede580ab-1d8f-4302-84ed-6047a0b24409	2026-04-18 17:26:12.431947+00	test-machine-cold-4	maintenance	INFO	[TEST] Routine check #99 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:26:12.535968+00
+f537f917-4aba-442e-9443-35bf81e1274a	2026-04-18 17:26:27.65946+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (low_confidence)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:26:27.678726+00
+545fb980-5952-41b0-8ba9-187cf580c61e	2026-04-18 17:26:27.65948+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (low_confidence)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:26:27.686699+00
+ef7f7e52-29fd-4643-bdb2-39ba488711d3	2026-04-18 17:26:27.659487+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (low_confidence)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:26:27.688606+00
+82ea74dd-2db6-47ec-8451-296dc1e9e046	2026-04-18 17:26:35.811051+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_0)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:26:35.817025+00
+c2b3a63b-79d8-4e64-8222-1322c429c17a	2026-04-18 17:26:35.815164+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_1)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:26:35.821776+00
+8a981af6-1d2c-40b7-8bee-5698202b5799	2026-04-18 17:26:35.816141+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_2)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:26:35.823357+00
+f6c0f2e0-4d91-4a90-b7fa-d3ebf5b6a2de	2026-04-18 17:26:35.817041+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_3)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:26:35.825272+00
+ffc79d2f-84fb-406f-b4fa-d3ca596cb881	2026-04-18 17:26:35.818041+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_4)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:26:35.826749+00
+852824af-8dcf-4b18-bbe9-59df6e044a2b	2026-04-18 17:26:35.819805+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_5)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:26:35.827918+00
+848dc465-30d1-4ba7-9527-b23b2766dc58	2026-04-18 17:26:35.820617+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_6)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:26:35.828945+00
+965744e8-45ab-4c19-af2a-e20cdf66d8be	2026-04-18 17:26:35.821501+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_7)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:26:35.830392+00
+31756d3d-e601-42b7-b650-ad0edd9d2388	2026-04-18 17:26:35.822421+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_8)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:26:35.831177+00
+232284d7-3f97-41fa-903b-318bff2479cd	2026-04-18 17:26:35.82353+00	test-machine-dl	unknown	ERROR	[TEST] Unrecognised log format (spike_test_9)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:26:35.832009+00
+6e538c79-e7e1-420c-9cf6-1b6965059add	2026-04-18 17:46:31.805628+00	test-p0-457fbf26	alarm	CRITICAL	[TEST] Fire alarm activated in zone 3	fire	Fire detected near conveyor belt	Evacuate zone 3 immediately	0.99	f		2026-04-18 17:46:31.96927+00
+ae521457-c7d9-45c2-a0e6-aa2661b06893	2026-04-18 17:46:47.038976+00	test-p1-457fbf26	sensor_failure	ERROR	[TEST] Temperature sensor malfunction	electrical	Thermal sensor overcurrent	Shut down and replace sensor	0.88	f		2026-04-18 17:46:47.04894+00
+cddca5c5-7ee1-4e1a-b1e9-85b130cbe07f	2026-04-18 17:47:05.097052+00	test-cold-457fbf26-0	maintenance	INFO	[TEST] Routine check #0 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+47eb2607-3e9a-4346-a31c-f14bfd80a839	2026-04-18 17:47:05.097231+00	test-cold-457fbf26-1	maintenance	INFO	[TEST] Routine check #1 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+71758543-eb32-44cb-bf8f-cff7f8feb703	2026-04-18 17:47:05.097262+00	test-cold-457fbf26-2	maintenance	INFO	[TEST] Routine check #2 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+8078b809-61f3-4f95-aeda-7fc427792f01	2026-04-18 17:47:05.097318+00	test-cold-457fbf26-1	maintenance	INFO	[TEST] Routine check #6 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+28996221-b559-4fe6-b935-33dc18fbe9bc	2026-04-18 17:47:05.097329+00	test-cold-457fbf26-2	maintenance	INFO	[TEST] Routine check #7 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+e2cc99d6-6a6b-486f-b2ff-a8915fdce041	2026-04-18 17:47:05.097274+00	test-cold-457fbf26-3	maintenance	INFO	[TEST] Routine check #3 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+4f503831-8b65-4498-868b-6aebe31dd7b9	2026-04-18 17:47:05.097292+00	test-cold-457fbf26-4	maintenance	INFO	[TEST] Routine check #4 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+a9538f43-b80c-40ff-a249-e16327d31097	2026-04-18 17:47:05.097338+00	test-cold-457fbf26-3	maintenance	INFO	[TEST] Routine check #8 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+76f8fd0a-13db-462c-a8fb-10a6b4ea7110	2026-04-18 17:47:05.098143+00	test-cold-457fbf26-4	maintenance	INFO	[TEST] Routine check #9 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+9a06bae1-7071-41e4-aea8-1e6de755504c	2026-04-18 17:47:05.097307+00	test-cold-457fbf26-0	maintenance	INFO	[TEST] Routine check #5 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+83436a33-f3f7-40fa-92c8-22cd82ed9701	2026-04-18 17:47:05.098174+00	test-cold-457fbf26-1	maintenance	INFO	[TEST] Routine check #11 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+7dea89e2-aa8d-43c6-bc1b-0fe4f94c9aac	2026-04-18 17:47:05.098186+00	test-cold-457fbf26-2	maintenance	INFO	[TEST] Routine check #12 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+6dbde461-3326-412d-80b1-95882af9e061	2026-04-18 17:47:05.098163+00	test-cold-457fbf26-0	maintenance	INFO	[TEST] Routine check #10 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+173a5e35-d99f-4b6b-9a10-51f6427bb7a0	2026-04-18 17:47:05.098196+00	test-cold-457fbf26-3	maintenance	INFO	[TEST] Routine check #13 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+0bc4bcb7-fd0f-4376-b39e-c4d76c271f3f	2026-04-18 17:47:05.098207+00	test-cold-457fbf26-4	maintenance	INFO	[TEST] Routine check #14 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+0e5f5290-4c94-46dc-9953-2c36c1eec8ae	2026-04-18 17:47:05.098217+00	test-cold-457fbf26-0	maintenance	INFO	[TEST] Routine check #15 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+92dedac6-4bc9-44bd-9670-7f7d5734556e	2026-04-18 17:47:05.098227+00	test-cold-457fbf26-1	maintenance	INFO	[TEST] Routine check #16 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+c8fe1cd4-1a7b-4b6c-a3ca-4e2d10b209e2	2026-04-18 17:47:05.098238+00	test-cold-457fbf26-2	maintenance	INFO	[TEST] Routine check #17 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+bfbb9107-3b6e-4ee4-bcdc-e21ddd20cc4a	2026-04-18 17:47:05.098249+00	test-cold-457fbf26-3	maintenance	INFO	[TEST] Routine check #18 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+1a84e1e2-ae4f-45ad-afd9-2295010fd536	2026-04-18 17:47:05.098259+00	test-cold-457fbf26-4	maintenance	INFO	[TEST] Routine check #19 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+fd077e3c-358c-43a5-a5fd-5b64cdefadf4	2026-04-18 17:47:05.098269+00	test-cold-457fbf26-0	maintenance	INFO	[TEST] Routine check #20 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+fb53be38-ac9d-4445-8da5-19577c18d37d	2026-04-18 17:47:05.098368+00	test-cold-457fbf26-1	maintenance	INFO	[TEST] Routine check #21 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+8406900f-679b-4814-be81-d8e0631bfec9	2026-04-18 17:47:05.098387+00	test-cold-457fbf26-2	maintenance	INFO	[TEST] Routine check #22 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+4bd67253-8edc-4873-b6be-a8f4d0ee99f1	2026-04-18 17:47:05.098399+00	test-cold-457fbf26-3	maintenance	INFO	[TEST] Routine check #23 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+011c6045-f973-42de-afaf-7003007e4520	2026-04-18 17:47:05.098413+00	test-cold-457fbf26-4	maintenance	INFO	[TEST] Routine check #24 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+40cefa0b-1fa4-414c-ac9b-f92f424b8e87	2026-04-18 17:47:05.098426+00	test-cold-457fbf26-0	maintenance	INFO	[TEST] Routine check #25 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+ac51efe2-2f53-4814-8e1d-b20dd7f24980	2026-04-18 17:47:05.098507+00	test-cold-457fbf26-1	maintenance	INFO	[TEST] Routine check #26 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+01e309da-cb1b-4eee-bac9-b2c930f7f933	2026-04-18 17:47:05.098529+00	test-cold-457fbf26-2	maintenance	INFO	[TEST] Routine check #27 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+4049dcf4-711e-4ba2-98a5-b6a30a8c7f82	2026-04-18 17:47:05.098546+00	test-cold-457fbf26-3	maintenance	INFO	[TEST] Routine check #28 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+ee4d7eb1-949b-4465-9baa-c3e92abaf286	2026-04-18 17:47:05.09856+00	test-cold-457fbf26-4	maintenance	INFO	[TEST] Routine check #29 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+f22f805e-b1af-4910-80d7-044df97b801e	2026-04-18 17:47:05.098572+00	test-cold-457fbf26-0	maintenance	INFO	[TEST] Routine check #30 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+7b04b543-5ad7-41cd-b1c4-acecf7b1b8b9	2026-04-18 17:47:05.098584+00	test-cold-457fbf26-1	maintenance	INFO	[TEST] Routine check #31 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+e80c18ee-bc50-4f31-aa11-673356a93f7e	2026-04-18 17:47:05.098623+00	test-cold-457fbf26-2	maintenance	INFO	[TEST] Routine check #32 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+a2587489-cb33-4932-b7cc-85b30e021db7	2026-04-18 17:47:05.098644+00	test-cold-457fbf26-3	maintenance	INFO	[TEST] Routine check #33 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+f434ddc6-a5a0-4a88-a70e-ae6c0acb9e72	2026-04-18 17:47:05.098665+00	test-cold-457fbf26-4	maintenance	INFO	[TEST] Routine check #34 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+0cdad436-954c-4b8e-89b7-28f81b520d1c	2026-04-18 17:47:05.098684+00	test-cold-457fbf26-0	maintenance	INFO	[TEST] Routine check #35 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+d8401392-4643-4ee1-9623-3ed0339d2869	2026-04-18 17:47:05.098696+00	test-cold-457fbf26-1	maintenance	INFO	[TEST] Routine check #36 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+f294f498-1956-4ae6-ae80-e004ec26bd54	2026-04-18 17:47:05.098709+00	test-cold-457fbf26-2	maintenance	INFO	[TEST] Routine check #37 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+41188322-8802-40c7-a4e6-97dc173f6c7c	2026-04-18 17:47:05.098721+00	test-cold-457fbf26-3	maintenance	INFO	[TEST] Routine check #38 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+33e8e700-87af-4520-a8bd-6b8804c04467	2026-04-18 17:47:05.098733+00	test-cold-457fbf26-4	maintenance	INFO	[TEST] Routine check #39 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+e7ed7601-8156-4e2b-a827-e139eecb7fa5	2026-04-18 17:47:05.098745+00	test-cold-457fbf26-0	maintenance	INFO	[TEST] Routine check #40 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+eb26c9d0-6f4f-4158-9742-24af5eee2882	2026-04-18 17:47:05.098768+00	test-cold-457fbf26-1	maintenance	INFO	[TEST] Routine check #41 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+ff875dae-01b9-40af-bfbe-4a0ad6ae75bd	2026-04-18 17:47:05.09878+00	test-cold-457fbf26-2	maintenance	INFO	[TEST] Routine check #42 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+c41a34bb-c0ee-4a09-830f-5121ece063f8	2026-04-18 17:47:05.098792+00	test-cold-457fbf26-3	maintenance	INFO	[TEST] Routine check #43 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+6c2f9435-c7c2-4b2e-825f-1b1a5f86aac1	2026-04-18 17:47:05.098804+00	test-cold-457fbf26-4	maintenance	INFO	[TEST] Routine check #44 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+482492c2-7d37-4c08-be6e-eca004e52641	2026-04-18 17:47:05.098815+00	test-cold-457fbf26-0	maintenance	INFO	[TEST] Routine check #45 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+150f0226-2aef-4513-b3bf-01d9acee6f2c	2026-04-18 17:47:05.098832+00	test-cold-457fbf26-1	maintenance	INFO	[TEST] Routine check #46 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+75289deb-812f-4cf0-ab2c-9b344979bf51	2026-04-18 17:47:05.098844+00	test-cold-457fbf26-2	maintenance	INFO	[TEST] Routine check #47 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+df20345a-8973-48ae-94c5-ebc1264d485f	2026-04-18 17:47:05.098856+00	test-cold-457fbf26-3	maintenance	INFO	[TEST] Routine check #48 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+0ff0436f-58c3-4c5d-aec5-822b1321b629	2026-04-18 17:47:05.098868+00	test-cold-457fbf26-4	maintenance	INFO	[TEST] Routine check #49 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+5697b8a7-1cb0-4564-b758-b6f5bae553bc	2026-04-18 17:47:05.098887+00	test-cold-457fbf26-0	maintenance	INFO	[TEST] Routine check #50 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+89a531cb-9d30-42ab-915d-ffacaef73bef	2026-04-18 17:47:05.098906+00	test-cold-457fbf26-1	maintenance	INFO	[TEST] Routine check #51 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+37fb4e7e-6bd0-41bd-856c-d24fc24ce3af	2026-04-18 17:47:05.098918+00	test-cold-457fbf26-2	maintenance	INFO	[TEST] Routine check #52 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+2d6ed7f9-6686-476b-be82-b8a15d2b9546	2026-04-18 17:47:05.09893+00	test-cold-457fbf26-3	maintenance	INFO	[TEST] Routine check #53 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+eab37226-982e-4313-93af-37272ebd6c94	2026-04-18 17:47:05.098942+00	test-cold-457fbf26-4	maintenance	INFO	[TEST] Routine check #54 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+21240c91-b3af-4a98-bb6d-afaea94d937d	2026-04-18 17:47:05.098953+00	test-cold-457fbf26-0	maintenance	INFO	[TEST] Routine check #55 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+a7ae87ad-b9a0-4397-a80f-bbc74ec15427	2026-04-18 17:47:05.098965+00	test-cold-457fbf26-1	maintenance	INFO	[TEST] Routine check #56 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+53ee5851-c471-4352-9729-2f991e7cce8d	2026-04-18 17:47:05.098976+00	test-cold-457fbf26-2	maintenance	INFO	[TEST] Routine check #57 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+c4b1c1ed-8340-4ca4-8392-772e0014b42e	2026-04-18 17:47:05.098989+00	test-cold-457fbf26-3	maintenance	INFO	[TEST] Routine check #58 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+4c0f8e8a-3a7b-4f51-94a7-af0924c955a3	2026-04-18 17:47:05.099007+00	test-cold-457fbf26-4	maintenance	INFO	[TEST] Routine check #59 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+02e92cd8-679e-4e94-83f0-d71271933e83	2026-04-18 17:47:05.09902+00	test-cold-457fbf26-0	maintenance	INFO	[TEST] Routine check #60 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+29159716-a0a9-4616-8693-b76eee0de4f0	2026-04-18 17:47:05.099031+00	test-cold-457fbf26-1	maintenance	INFO	[TEST] Routine check #61 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+255eec5b-6b92-49bb-934d-8ffb7ddd3bb2	2026-04-18 17:47:05.099043+00	test-cold-457fbf26-2	maintenance	INFO	[TEST] Routine check #62 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+c07be7d8-9883-450c-b8de-c12474f8760f	2026-04-18 17:47:05.099054+00	test-cold-457fbf26-3	maintenance	INFO	[TEST] Routine check #63 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+c671e363-6c2f-4d6a-891f-4052abda6d9d	2026-04-18 17:47:05.099066+00	test-cold-457fbf26-4	maintenance	INFO	[TEST] Routine check #64 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+5c165fa5-5432-4f8b-aa65-b967c443fb99	2026-04-18 17:47:05.099103+00	test-cold-457fbf26-0	maintenance	INFO	[TEST] Routine check #65 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+9034ca46-04bb-415e-abc6-5cf9dcfe35ae	2026-04-18 17:47:05.099121+00	test-cold-457fbf26-1	maintenance	INFO	[TEST] Routine check #66 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+3304b0eb-e3be-45b4-8c3c-34aa4d48326c	2026-04-18 17:47:05.09914+00	test-cold-457fbf26-2	maintenance	INFO	[TEST] Routine check #67 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+d5df8183-6047-4277-9bd6-8ebd2441f643	2026-04-18 17:47:05.099152+00	test-cold-457fbf26-3	maintenance	INFO	[TEST] Routine check #68 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+3e193872-ba06-47fd-9eab-f00f229a08ef	2026-04-18 17:47:05.099163+00	test-cold-457fbf26-4	maintenance	INFO	[TEST] Routine check #69 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+07ca4d21-be87-41fd-895d-4e0580070505	2026-04-18 17:47:05.099175+00	test-cold-457fbf26-0	maintenance	INFO	[TEST] Routine check #70 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+e10c2808-b050-4506-b913-4d24bd47e0e4	2026-04-18 17:47:05.099194+00	test-cold-457fbf26-1	maintenance	INFO	[TEST] Routine check #71 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+8a787409-82be-4183-9be2-b6f4c31fbcea	2026-04-18 17:47:05.099206+00	test-cold-457fbf26-2	maintenance	INFO	[TEST] Routine check #72 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+5ef728e5-ba31-4c7d-87a4-f04901f8268e	2026-04-18 17:47:05.099217+00	test-cold-457fbf26-3	maintenance	INFO	[TEST] Routine check #73 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+82541d96-e398-45b4-949d-4d58def4b553	2026-04-18 17:47:05.099228+00	test-cold-457fbf26-4	maintenance	INFO	[TEST] Routine check #74 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+5dc5e22b-6fb2-4014-969d-8804aba153d0	2026-04-18 17:47:05.09924+00	test-cold-457fbf26-0	maintenance	INFO	[TEST] Routine check #75 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+058a970b-7b97-4630-be31-df79c5ef5891	2026-04-18 17:47:05.099251+00	test-cold-457fbf26-1	maintenance	INFO	[TEST] Routine check #76 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+94cb833d-540c-4994-91a4-d8e14ffc2b8e	2026-04-18 17:47:05.099273+00	test-cold-457fbf26-2	maintenance	INFO	[TEST] Routine check #77 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+9d467269-f4eb-428c-8059-ac1d42240f91	2026-04-18 17:47:05.099284+00	test-cold-457fbf26-3	maintenance	INFO	[TEST] Routine check #78 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+0b769898-6175-417a-919f-373d8575fe49	2026-04-18 17:47:05.099296+00	test-cold-457fbf26-4	maintenance	INFO	[TEST] Routine check #79 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+0bf4932d-9d18-43ce-a0e4-54cd824f46a7	2026-04-18 17:47:05.099307+00	test-cold-457fbf26-0	maintenance	INFO	[TEST] Routine check #80 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+9c90d50a-901f-4c8e-8066-677042844ea5	2026-04-18 17:47:05.099319+00	test-cold-457fbf26-1	maintenance	INFO	[TEST] Routine check #81 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+93fcec3f-2184-4bbc-aa6b-e8cf3a33dcc2	2026-04-18 17:47:05.09933+00	test-cold-457fbf26-2	maintenance	INFO	[TEST] Routine check #82 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+7ab042d6-2229-42fa-8ec1-21f18d753abf	2026-04-18 17:47:05.099341+00	test-cold-457fbf26-3	maintenance	INFO	[TEST] Routine check #83 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+7c4a40bb-fd76-44f9-9152-14b146f7cb10	2026-04-18 17:47:05.099353+00	test-cold-457fbf26-4	maintenance	INFO	[TEST] Routine check #84 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+205c065f-a0dd-4abe-b66c-866af8f78ad9	2026-04-18 17:47:05.099364+00	test-cold-457fbf26-0	maintenance	INFO	[TEST] Routine check #85 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+d066353a-76dc-461f-ab62-e806ab5d6686	2026-04-18 17:47:05.099383+00	test-cold-457fbf26-1	maintenance	INFO	[TEST] Routine check #86 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+0166976c-b56c-4f5d-a4c3-032f3a47d53a	2026-04-18 17:47:05.099396+00	test-cold-457fbf26-2	maintenance	INFO	[TEST] Routine check #87 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+ce4c3a60-5917-4008-8a21-a9e67de2be70	2026-04-18 17:47:05.099417+00	test-cold-457fbf26-3	maintenance	INFO	[TEST] Routine check #88 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+2f8cd451-014f-4066-a477-2607895346a1	2026-04-18 17:47:05.099429+00	test-cold-457fbf26-4	maintenance	INFO	[TEST] Routine check #89 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+65c7c3bd-022f-4925-a379-de62cbcd8902	2026-04-18 17:47:05.09944+00	test-cold-457fbf26-0	maintenance	INFO	[TEST] Routine check #90 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+014e1380-6252-4f9d-9e8b-d4977f98b3a3	2026-04-18 17:47:05.09946+00	test-cold-457fbf26-1	maintenance	INFO	[TEST] Routine check #91 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+d44225fd-828a-49e5-a9a3-d9939f383e27	2026-04-18 17:47:05.099483+00	test-cold-457fbf26-2	maintenance	INFO	[TEST] Routine check #92 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+09d92a62-e7ec-4790-95c6-5788d83734c2	2026-04-18 17:47:05.099506+00	test-cold-457fbf26-3	maintenance	INFO	[TEST] Routine check #93 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+be4a103f-a9a3-45f4-ac75-7d574d1f76de	2026-04-18 17:47:05.099518+00	test-cold-457fbf26-4	maintenance	INFO	[TEST] Routine check #94 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+fd8cb081-1ac3-4535-a8df-6524a2096037	2026-04-18 17:47:05.099529+00	test-cold-457fbf26-0	maintenance	INFO	[TEST] Routine check #95 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+c23bf67a-a6cf-45b0-8143-e79a71109d2a	2026-04-18 17:47:05.099541+00	test-cold-457fbf26-1	maintenance	INFO	[TEST] Routine check #96 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+1d655f57-aeaa-403c-89e8-f11e7914e92c	2026-04-18 17:47:05.099553+00	test-cold-457fbf26-2	maintenance	INFO	[TEST] Routine check #97 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+f8df97d1-f6c5-4ae2-8c2e-965e4dfe7f9d	2026-04-18 17:47:05.099575+00	test-cold-457fbf26-3	maintenance	INFO	[TEST] Routine check #98 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+765dcb7c-37cc-4d68-bfec-a0e7afab2a0d	2026-04-18 17:47:05.099593+00	test-cold-457fbf26-4	maintenance	INFO	[TEST] Routine check #99 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:47:05.316819+00
+2bfe1763-c243-4307-8dcc-5c73942ff851	2026-04-18 17:47:25.420972+00	test-dl-457fbf26	unknown	ERROR	[TEST] Unrecognised log format (low_confidence)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:47:25.505476+00
+7dd391a5-3560-4daa-ab53-6b9685ac966c	2026-04-18 17:47:25.421097+00	test-dl-457fbf26	unknown	ERROR	[TEST] Unrecognised log format (low_confidence)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:47:25.515049+00
+9911cea4-7833-494c-8577-7fa40dec9487	2026-04-18 17:47:25.421113+00	test-dl-457fbf26	unknown	ERROR	[TEST] Unrecognised log format (low_confidence)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:47:25.516102+00
+0f331d32-54fe-4ae9-9b61-34b1adf79c2c	2026-04-18 17:47:37.585928+00	test-dl-457fbf26	unknown	ERROR	[TEST] Unrecognised log format (spike_test_0)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:47:37.614169+00
+e48276ad-3252-4f84-8d92-12c56c98d2a5	2026-04-18 17:47:37.596194+00	test-dl-457fbf26	unknown	ERROR	[TEST] Unrecognised log format (spike_test_1)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:47:37.625282+00
+82daec94-3c05-410d-a7e5-06680676bcf5	2026-04-18 17:47:37.602188+00	test-dl-457fbf26	unknown	ERROR	[TEST] Unrecognised log format (spike_test_2)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:47:37.62789+00
+d44bde11-85fd-47a5-9910-7c3fa0983550	2026-04-18 17:47:37.60421+00	test-dl-457fbf26	unknown	ERROR	[TEST] Unrecognised log format (spike_test_3)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:47:37.630925+00
+48eba3e6-cb19-4f55-bf87-d8117b3fde64	2026-04-18 17:47:37.605455+00	test-dl-457fbf26	unknown	ERROR	[TEST] Unrecognised log format (spike_test_4)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:47:37.636014+00
+e4f52ea7-cefa-4a66-acca-ea1cc9d894cd	2026-04-18 17:47:37.607288+00	test-dl-457fbf26	unknown	ERROR	[TEST] Unrecognised log format (spike_test_5)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:47:37.637753+00
+d2ac74ca-fb75-4acf-8e20-e44f078e3b8d	2026-04-18 17:47:37.608502+00	test-dl-457fbf26	unknown	ERROR	[TEST] Unrecognised log format (spike_test_6)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:47:37.64016+00
+ae55b1c1-e11d-4752-abca-b7585f81dea2	2026-04-18 17:47:37.609596+00	test-dl-457fbf26	unknown	ERROR	[TEST] Unrecognised log format (spike_test_7)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:47:37.641536+00
+606a6229-2182-4e9d-bf58-883e76a4baaa	2026-04-18 17:47:37.61137+00	test-dl-457fbf26	unknown	ERROR	[TEST] Unrecognised log format (spike_test_8)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:47:37.643712+00
+77cc9716-621a-4635-af39-c2c1d8769d37	2026-04-18 17:47:37.613501+00	test-dl-457fbf26	unknown	ERROR	[TEST] Unrecognised log format (spike_test_9)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:47:37.644754+00
+40814fb9-2751-46ac-b78e-23e409670dd3	2026-04-18 17:49:08.003946+00	test-p0-1632b888	alarm	CRITICAL	[TEST] Fire alarm activated in zone 3	fire	Fire detected near conveyor belt	Evacuate zone 3 immediately	0.99	f		2026-04-18 17:49:08.076948+00
+4cf967f2-a4bf-4566-ba37-e3f471096abd	2026-04-18 17:49:08.004218+00	test-p1-1632b888	sensor_failure	ERROR	[TEST] Temperature sensor malfunction	electrical	Thermal sensor overcurrent	Shut down and replace sensor	0.88	f		2026-04-18 17:49:08.091918+00
+d2b3c384-76a8-4663-9d5a-18d9d6c7e335	2026-04-18 17:49:40.197038+00	test-cold-1632b888-0	maintenance	INFO	[TEST] Routine check #0 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+d84a33f3-59c3-4904-beaf-31fc432ec4c4	2026-04-18 17:49:40.197232+00	test-cold-1632b888-3	maintenance	INFO	[TEST] Routine check #3 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+8d39db75-5a45-4cc3-bcf9-4e2cc3f65ac9	2026-04-18 17:49:40.197266+00	test-cold-1632b888-4	maintenance	INFO	[TEST] Routine check #4 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+f3d45c71-73f8-4fd0-ac23-0ba9ff765fbf	2026-04-18 17:49:40.197197+00	test-cold-1632b888-1	maintenance	INFO	[TEST] Routine check #1 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+ebaf95ba-f383-4154-a340-e6d05a14034c	2026-04-18 17:49:40.197217+00	test-cold-1632b888-2	maintenance	INFO	[TEST] Routine check #2 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+c36c1506-3c9e-40a6-8366-65baa6f5ea81	2026-04-18 17:49:40.197282+00	test-cold-1632b888-0	maintenance	INFO	[TEST] Routine check #5 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+258888c0-6cd6-4d8f-b1c7-3c650e7a3499	2026-04-18 17:49:40.197297+00	test-cold-1632b888-1	maintenance	INFO	[TEST] Routine check #6 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+2e5e83b9-31d9-4032-8df4-c8e4db2a6f76	2026-04-18 17:49:40.197311+00	test-cold-1632b888-2	maintenance	INFO	[TEST] Routine check #7 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+62e8907c-ea56-402b-a605-a7c82772f8b5	2026-04-18 17:49:40.197324+00	test-cold-1632b888-3	maintenance	INFO	[TEST] Routine check #8 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+7e2ef345-24ac-48be-a57a-5107a889721a	2026-04-18 17:49:40.197338+00	test-cold-1632b888-4	maintenance	INFO	[TEST] Routine check #9 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+292cea98-d039-451b-80c6-b2a3b13cf6b7	2026-04-18 17:49:40.197358+00	test-cold-1632b888-0	maintenance	INFO	[TEST] Routine check #10 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+a5651186-2ff7-4665-b77c-6a91dca1f6b9	2026-04-18 17:49:40.197398+00	test-cold-1632b888-1	maintenance	INFO	[TEST] Routine check #11 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+94518703-15cb-4a0b-8367-0a3413aa49d7	2026-04-18 17:49:40.197412+00	test-cold-1632b888-2	maintenance	INFO	[TEST] Routine check #12 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+a1dc0871-40df-4b1f-9adf-f8662151dc44	2026-04-18 17:49:40.197435+00	test-cold-1632b888-3	maintenance	INFO	[TEST] Routine check #13 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+a70871ad-0332-45a8-b7e3-191c08b97152	2026-04-18 17:49:40.197449+00	test-cold-1632b888-4	maintenance	INFO	[TEST] Routine check #14 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+cc242688-f558-4ea9-9f4c-038040b59cd1	2026-04-18 17:49:40.197462+00	test-cold-1632b888-0	maintenance	INFO	[TEST] Routine check #15 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+a73c445f-0716-4b15-8834-b3f506dbfefb	2026-04-18 17:49:40.197475+00	test-cold-1632b888-1	maintenance	INFO	[TEST] Routine check #16 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+5ce255b6-7715-4ae2-8148-b195362b1bbd	2026-04-18 17:49:40.19749+00	test-cold-1632b888-2	maintenance	INFO	[TEST] Routine check #17 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+bcea5bf6-51f6-4510-860f-e9563af4c6c3	2026-04-18 17:49:40.197502+00	test-cold-1632b888-3	maintenance	INFO	[TEST] Routine check #18 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+442c7cbc-22d4-45ee-bf8f-838e1a0775ca	2026-04-18 17:49:40.197515+00	test-cold-1632b888-4	maintenance	INFO	[TEST] Routine check #19 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+48e69a86-321c-4665-86c4-5a1facc80458	2026-04-18 17:49:40.197528+00	test-cold-1632b888-0	maintenance	INFO	[TEST] Routine check #20 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+e43b9baf-4efd-4b6d-96b1-846a08fc02f9	2026-04-18 17:49:40.197541+00	test-cold-1632b888-1	maintenance	INFO	[TEST] Routine check #21 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+978c952c-174c-4356-95d8-c6000a2064c5	2026-04-18 17:49:40.197635+00	test-cold-1632b888-2	maintenance	INFO	[TEST] Routine check #22 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+1383eea9-b4c1-4aad-9926-830d84628ca3	2026-04-18 17:49:40.197663+00	test-cold-1632b888-3	maintenance	INFO	[TEST] Routine check #23 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+7313db66-7fd2-42d9-84a8-ebf91a675dcb	2026-04-18 17:49:40.19768+00	test-cold-1632b888-4	maintenance	INFO	[TEST] Routine check #24 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+2f2e3072-1ce0-4288-afb9-c84dfd6b559e	2026-04-18 17:49:40.197695+00	test-cold-1632b888-0	maintenance	INFO	[TEST] Routine check #25 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+8d066259-097a-4d81-bd2e-48c930d740e5	2026-04-18 17:49:40.197769+00	test-cold-1632b888-1	maintenance	INFO	[TEST] Routine check #26 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+d31197ef-1e37-4cdd-8ddd-68c8f2e815cd	2026-04-18 17:49:40.19782+00	test-cold-1632b888-2	maintenance	INFO	[TEST] Routine check #27 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+64c5744f-3500-400b-a184-8b4622bc515c	2026-04-18 17:49:40.197868+00	test-cold-1632b888-3	maintenance	INFO	[TEST] Routine check #28 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+8867bcf1-e2ff-41f1-94d6-3d16e3763222	2026-04-18 17:49:40.197939+00	test-cold-1632b888-4	maintenance	INFO	[TEST] Routine check #29 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+a9f28a4b-4f13-4270-aec1-972dd19d7fca	2026-04-18 17:49:40.197993+00	test-cold-1632b888-0	maintenance	INFO	[TEST] Routine check #30 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+04ee24db-a9ac-4d8c-8d28-7dd759dac782	2026-04-18 17:49:40.19801+00	test-cold-1632b888-1	maintenance	INFO	[TEST] Routine check #31 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+efee137c-fb75-40c4-8d70-db007c691143	2026-04-18 17:49:40.198023+00	test-cold-1632b888-2	maintenance	INFO	[TEST] Routine check #32 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+2f280b8c-4a28-4d5d-bb9c-a8ad4b4be2f9	2026-04-18 17:49:40.198103+00	test-cold-1632b888-3	maintenance	INFO	[TEST] Routine check #33 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+e5521a61-51ac-42fc-b770-34592a433f03	2026-04-18 17:49:40.198122+00	test-cold-1632b888-4	maintenance	INFO	[TEST] Routine check #34 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+ea46fa61-a709-40fa-b403-ddf334e913c3	2026-04-18 17:49:40.198135+00	test-cold-1632b888-0	maintenance	INFO	[TEST] Routine check #35 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+d7a545cd-2880-400d-861b-4b61e1844fcc	2026-04-18 17:49:40.198148+00	test-cold-1632b888-1	maintenance	INFO	[TEST] Routine check #36 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+9e786d7b-c8b2-4c69-be5c-1de44e1d82eb	2026-04-18 17:49:40.198162+00	test-cold-1632b888-2	maintenance	INFO	[TEST] Routine check #37 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+7a451f22-7d5f-4ef5-86f8-7537dde5b092	2026-04-18 17:49:40.19818+00	test-cold-1632b888-3	maintenance	INFO	[TEST] Routine check #38 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+37bebc1a-1c2c-494c-8bac-fd373bc8a2ae	2026-04-18 17:49:40.198192+00	test-cold-1632b888-4	maintenance	INFO	[TEST] Routine check #39 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+e3b7e739-ff29-4f6e-9efb-78134f7e22ed	2026-04-18 17:49:40.198205+00	test-cold-1632b888-0	maintenance	INFO	[TEST] Routine check #40 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+293a7995-71b0-4f07-9df1-be6a45d62103	2026-04-18 17:49:40.198262+00	test-cold-1632b888-1	maintenance	INFO	[TEST] Routine check #41 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+c2b6e17b-5a4e-4b62-a3bc-1d24c9a24453	2026-04-18 17:49:40.198276+00	test-cold-1632b888-2	maintenance	INFO	[TEST] Routine check #42 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+4ba1c519-b64e-4dbd-9879-b9d321716e4b	2026-04-18 17:49:40.198289+00	test-cold-1632b888-3	maintenance	INFO	[TEST] Routine check #43 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+a735ea44-5560-4744-86b3-792ba8429194	2026-04-18 17:49:40.198301+00	test-cold-1632b888-4	maintenance	INFO	[TEST] Routine check #44 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+5861dceb-415e-4b1f-a373-2a22df8a1101	2026-04-18 17:49:40.198321+00	test-cold-1632b888-0	maintenance	INFO	[TEST] Routine check #45 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+0d9c52f3-3530-4218-8aa1-a48580852d84	2026-04-18 17:49:40.198334+00	test-cold-1632b888-1	maintenance	INFO	[TEST] Routine check #46 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+8d2bd427-fb68-40e0-b50d-79fcc5ed0d64	2026-04-18 17:49:40.198346+00	test-cold-1632b888-2	maintenance	INFO	[TEST] Routine check #47 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+824c9ba7-38f0-4c8a-be1d-20f79f6653c1	2026-04-18 17:49:40.198358+00	test-cold-1632b888-3	maintenance	INFO	[TEST] Routine check #48 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+510b6f2b-0ee4-4e0a-8f3a-40bb616406a3	2026-04-18 17:49:40.19837+00	test-cold-1632b888-4	maintenance	INFO	[TEST] Routine check #49 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+a36c0cee-e28c-4520-b702-ec3a3ba270f1	2026-04-18 17:49:40.198382+00	test-cold-1632b888-0	maintenance	INFO	[TEST] Routine check #50 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+2aa3047a-97c2-4d09-a571-5e694ca176ca	2026-04-18 17:49:40.198394+00	test-cold-1632b888-1	maintenance	INFO	[TEST] Routine check #51 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+8af875a6-7f2e-4a5f-b62a-db1ed0e18035	2026-04-18 17:49:40.198406+00	test-cold-1632b888-2	maintenance	INFO	[TEST] Routine check #52 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+89dd3c02-14bf-4037-b709-4403050c83dc	2026-04-18 17:49:40.198437+00	test-cold-1632b888-3	maintenance	INFO	[TEST] Routine check #53 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+5e611f6d-87d9-4161-9768-f3eef066d740	2026-04-18 17:49:40.198451+00	test-cold-1632b888-4	maintenance	INFO	[TEST] Routine check #54 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+5373bd79-0fcf-45dd-86b8-115270ba1c44	2026-04-18 17:49:40.198463+00	test-cold-1632b888-0	maintenance	INFO	[TEST] Routine check #55 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+3f514daa-342b-4f24-96ff-b4050c2d6521	2026-04-18 17:49:40.198475+00	test-cold-1632b888-1	maintenance	INFO	[TEST] Routine check #56 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+c782833c-e67a-4b8e-b6e8-6d3fd6ffc44e	2026-04-18 17:49:40.198488+00	test-cold-1632b888-2	maintenance	INFO	[TEST] Routine check #57 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+a8efadf4-e470-4433-9cfd-323465a1ae1b	2026-04-18 17:49:40.198501+00	test-cold-1632b888-3	maintenance	INFO	[TEST] Routine check #58 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+7873c5f0-e485-4135-8eeb-d8409ce69d51	2026-04-18 17:49:40.198515+00	test-cold-1632b888-4	maintenance	INFO	[TEST] Routine check #59 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+8cf6c7d0-f94e-4800-a409-64744313fabb	2026-04-18 17:49:40.198528+00	test-cold-1632b888-0	maintenance	INFO	[TEST] Routine check #60 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+3516e0e4-5c72-45f5-a5b3-b00796a0020b	2026-04-18 17:49:40.198542+00	test-cold-1632b888-1	maintenance	INFO	[TEST] Routine check #61 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+60cd8177-bd77-489d-a91e-ddb9fa4db670	2026-04-18 17:49:40.198554+00	test-cold-1632b888-2	maintenance	INFO	[TEST] Routine check #62 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+a0a0b46e-f04d-4c65-929b-2b514bbbcd7b	2026-04-18 17:49:40.198566+00	test-cold-1632b888-3	maintenance	INFO	[TEST] Routine check #63 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+304046c5-c72f-4270-b5ad-6cdca09f7dcd	2026-04-18 17:49:40.198578+00	test-cold-1632b888-4	maintenance	INFO	[TEST] Routine check #64 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+e0dac846-e70d-4581-9447-68d894d4c304	2026-04-18 17:49:40.198676+00	test-cold-1632b888-0	maintenance	INFO	[TEST] Routine check #65 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+8affbc68-61d7-4eee-b41d-13ef2ba34f88	2026-04-18 17:49:40.198689+00	test-cold-1632b888-1	maintenance	INFO	[TEST] Routine check #66 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+3b85c34b-2295-4b67-93ce-c5d1cda74be0	2026-04-18 17:49:40.198701+00	test-cold-1632b888-2	maintenance	INFO	[TEST] Routine check #67 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+20a5102b-67e7-45a2-8fe7-88c165862d11	2026-04-18 17:49:40.198712+00	test-cold-1632b888-3	maintenance	INFO	[TEST] Routine check #68 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+6819212c-9167-471c-9a01-a1add2fc7290	2026-04-18 17:49:40.198724+00	test-cold-1632b888-4	maintenance	INFO	[TEST] Routine check #69 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+546cd10e-93c1-400c-9c3b-4c4bf115f80a	2026-04-18 17:49:40.198736+00	test-cold-1632b888-0	maintenance	INFO	[TEST] Routine check #70 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+a67d7496-ed06-42e6-ae7e-23bfac69db2d	2026-04-18 17:49:40.198761+00	test-cold-1632b888-1	maintenance	INFO	[TEST] Routine check #71 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+440cca17-07c5-413c-957f-2acbde6cbe79	2026-04-18 17:49:40.198773+00	test-cold-1632b888-2	maintenance	INFO	[TEST] Routine check #72 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+679a6d92-1288-4f57-899b-a2b5786cd5f6	2026-04-18 17:49:40.198784+00	test-cold-1632b888-3	maintenance	INFO	[TEST] Routine check #73 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+41c1652f-740c-4f3d-b0c3-7b510a6cb94f	2026-04-18 17:49:40.198796+00	test-cold-1632b888-4	maintenance	INFO	[TEST] Routine check #74 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+52b8e428-1b45-4583-8779-3496c2819bd7	2026-04-18 17:49:40.198807+00	test-cold-1632b888-0	maintenance	INFO	[TEST] Routine check #75 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+97d852dd-178c-4e4a-9f2c-f5a65b2f2f97	2026-04-18 17:49:40.198819+00	test-cold-1632b888-1	maintenance	INFO	[TEST] Routine check #76 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+43ed4c0e-8ced-45fd-8e22-dbe882ebd045	2026-04-18 17:49:40.198852+00	test-cold-1632b888-2	maintenance	INFO	[TEST] Routine check #77 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+05ded300-b459-4c92-8921-d2ae622ae4b6	2026-04-18 17:49:40.198865+00	test-cold-1632b888-3	maintenance	INFO	[TEST] Routine check #78 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+9f237748-0ad4-4c44-a438-4dcc0c183cb0	2026-04-18 17:49:40.198876+00	test-cold-1632b888-4	maintenance	INFO	[TEST] Routine check #79 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+95ceba27-1963-40a6-b74c-7f4561e890ec	2026-04-18 17:49:40.19889+00	test-cold-1632b888-0	maintenance	INFO	[TEST] Routine check #80 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+a1850e75-9a73-4727-8684-941f89284ed2	2026-04-18 17:49:40.198901+00	test-cold-1632b888-1	maintenance	INFO	[TEST] Routine check #81 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+970dec37-979f-4b18-a297-0b4c532ee773	2026-04-18 17:49:40.198914+00	test-cold-1632b888-2	maintenance	INFO	[TEST] Routine check #82 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+632ba26b-3483-407b-ba9d-9fd08f250b09	2026-04-18 17:49:40.198925+00	test-cold-1632b888-3	maintenance	INFO	[TEST] Routine check #83 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+92fae1e8-93c1-462d-8f51-a82038afa241	2026-04-18 17:49:40.198938+00	test-cold-1632b888-4	maintenance	INFO	[TEST] Routine check #84 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+1d18e199-227e-4a15-872a-17e58e609a01	2026-04-18 17:49:40.198956+00	test-cold-1632b888-0	maintenance	INFO	[TEST] Routine check #85 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+bc811665-d5d5-462e-9c38-d9c1b0337fef	2026-04-18 17:49:40.198968+00	test-cold-1632b888-1	maintenance	INFO	[TEST] Routine check #86 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+64b7c2b9-9a74-412b-906f-89749f45a84b	2026-04-18 17:49:40.19898+00	test-cold-1632b888-2	maintenance	INFO	[TEST] Routine check #87 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+7918ed7e-285d-40c9-90e4-5e6b0a2a1cf8	2026-04-18 17:49:40.198992+00	test-cold-1632b888-3	maintenance	INFO	[TEST] Routine check #88 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+facfdaa6-9f43-4c9d-9aec-8d86faf309f1	2026-04-18 17:49:40.199004+00	test-cold-1632b888-4	maintenance	INFO	[TEST] Routine check #89 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+8509b2a0-fc69-42d3-ad5c-c9e71145f78c	2026-04-18 17:49:40.199026+00	test-cold-1632b888-0	maintenance	INFO	[TEST] Routine check #90 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+58d45c35-1405-48fc-8432-9aaf8faecb7d	2026-04-18 17:49:40.199038+00	test-cold-1632b888-1	maintenance	INFO	[TEST] Routine check #91 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+ceb62f2e-8279-41a5-b14e-fb5d74293a78	2026-04-18 17:49:40.199051+00	test-cold-1632b888-2	maintenance	INFO	[TEST] Routine check #92 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+921b6890-fccd-4693-a047-d7421987b346	2026-04-18 17:49:40.199086+00	test-cold-1632b888-3	maintenance	INFO	[TEST] Routine check #93 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+ee6a53d9-7a16-48a5-996e-d37c3f6dabeb	2026-04-18 17:49:40.199107+00	test-cold-1632b888-4	maintenance	INFO	[TEST] Routine check #94 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+59df0cee-bfbb-49ff-8032-7e765787807c	2026-04-18 17:49:40.199131+00	test-cold-1632b888-1	maintenance	INFO	[TEST] Routine check #96 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+ac3284a9-c599-4fc3-b8e2-cb092f400328	2026-04-18 17:49:40.199119+00	test-cold-1632b888-0	maintenance	INFO	[TEST] Routine check #95 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+d57d2463-afe8-49cd-92f0-696bcc3244db	2026-04-18 17:49:40.199144+00	test-cold-1632b888-2	maintenance	INFO	[TEST] Routine check #97 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+e92f947d-bac6-4876-aa69-8919f9b7e3b6	2026-04-18 17:49:40.199155+00	test-cold-1632b888-3	maintenance	INFO	[TEST] Routine check #98 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+a2551a6a-b430-46cd-ac9c-5ebee6d0342d	2026-04-18 17:49:40.199168+00	test-cold-1632b888-4	maintenance	INFO	[TEST] Routine check #99 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 17:49:40.315793+00
+7c8cf53a-aeb4-4bfa-9d82-3e345a33ec7a	2026-04-18 17:50:00.451089+00	test-dl-1632b888	unknown	ERROR	[TEST] Unrecognised log format (low_confidence)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:50:00.471939+00
+0e11e9f7-19e8-41e1-82e0-fe9d20916e6a	2026-04-18 17:50:00.45112+00	test-dl-1632b888	unknown	ERROR	[TEST] Unrecognised log format (low_confidence)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:50:00.476395+00
+2f5bb9aa-6ad1-477e-a1e4-29638547ce7f	2026-04-18 17:50:00.451128+00	test-dl-1632b888	unknown	ERROR	[TEST] Unrecognised log format (low_confidence)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:50:00.477956+00
+e3fd2590-8ce5-4690-b16d-c6c324968d96	2026-04-18 17:50:12.569059+00	test-dl-1632b888	unknown	ERROR	[TEST] Unrecognised log format (spike_test_0)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:50:12.597714+00
+730c3d71-25ea-47ee-b426-da45a24785eb	2026-04-18 17:50:12.582204+00	test-dl-1632b888	unknown	ERROR	[TEST] Unrecognised log format (spike_test_1)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:50:12.604746+00
+16686a6b-e0be-4d7d-a346-7bb3ae6c0fff	2026-04-18 17:50:12.589023+00	test-dl-1632b888	unknown	ERROR	[TEST] Unrecognised log format (spike_test_2)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:50:12.606295+00
+5f89623d-b365-4b6c-a20d-12b4201e6104	2026-04-18 17:50:12.594171+00	test-dl-1632b888	unknown	ERROR	[TEST] Unrecognised log format (spike_test_3)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:50:12.609185+00
+03959c29-bc91-4196-9d0f-8c10fa0e007e	2026-04-18 17:50:12.596179+00	test-dl-1632b888	unknown	ERROR	[TEST] Unrecognised log format (spike_test_4)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:50:12.610294+00
+bc934625-0308-4336-916c-ea2250de5874	2026-04-18 17:50:12.598083+00	test-dl-1632b888	unknown	ERROR	[TEST] Unrecognised log format (spike_test_5)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:50:12.611259+00
+38e56fad-b4a2-4d09-ae01-e353f9f9ae49	2026-04-18 17:50:12.599309+00	test-dl-1632b888	unknown	ERROR	[TEST] Unrecognised log format (spike_test_6)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:50:12.612237+00
+724ccf77-b34b-49b7-b3d8-775b631f6658	2026-04-18 17:50:12.600397+00	test-dl-1632b888	unknown	ERROR	[TEST] Unrecognised log format (spike_test_7)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:50:12.613213+00
+1efda8ce-fb01-4a0f-bcb9-04435dbf24af	2026-04-18 17:50:12.601486+00	test-dl-1632b888	unknown	ERROR	[TEST] Unrecognised log format (spike_test_8)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:50:12.614026+00
+dffcc0ce-5076-4bd5-adea-b7fcf55f12a1	2026-04-18 17:50:12.60315+00	test-dl-1632b888	unknown	ERROR	[TEST] Unrecognised log format (spike_test_9)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 17:50:12.615023+00
+76884d3f-1726-43d7-b84c-38b8fdfb1fc3	2026-04-18 18:09:21.738375+00	test-p1-7d6d1f0f	sensor_failure	ERROR	[TEST] Temperature sensor malfunction	electrical	Thermal sensor overcurrent	Shut down and replace sensor	0.88	f		2026-04-18 18:09:21.838239+00
+8f76a88a-0584-4ff7-bb0c-4350c5dcc4e4	2026-04-18 18:09:39.94139+00	test-cold-7d6d1f0f-0	maintenance	INFO	[TEST] Routine check #0 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+cc43732f-0e77-4680-8025-110a89d6515f	2026-04-18 18:09:39.941417+00	test-cold-7d6d1f0f-2	maintenance	INFO	[TEST] Routine check #2 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+13c7b2be-6ded-409a-9756-08d5be48533f	2026-04-18 18:09:39.941433+00	test-cold-7d6d1f0f-0	maintenance	INFO	[TEST] Routine check #5 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+730b4a8d-c306-48d2-91b2-b18abe88f20f	2026-04-18 18:09:39.941442+00	test-cold-7d6d1f0f-2	maintenance	INFO	[TEST] Routine check #7 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+bf474318-a3c4-4096-b918-cd74133fa652	2026-04-18 18:09:39.941456+00	test-cold-7d6d1f0f-0	maintenance	INFO	[TEST] Routine check #10 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+907bead5-2a0c-450d-b54a-40dbb26352b6	2026-04-18 18:09:39.941468+00	test-cold-7d6d1f0f-2	maintenance	INFO	[TEST] Routine check #12 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+1874d309-c0a7-48ba-902e-a603e05f92b0	2026-04-18 18:09:39.941486+00	test-cold-7d6d1f0f-0	maintenance	INFO	[TEST] Routine check #15 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+bb72a821-35f9-4ddc-8443-5d8b9db7ea8c	2026-04-18 18:09:39.941496+00	test-cold-7d6d1f0f-2	maintenance	INFO	[TEST] Routine check #17 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+58865420-d20f-4c50-a282-cf95847af5e1	2026-04-18 18:09:39.941422+00	test-cold-7d6d1f0f-3	maintenance	INFO	[TEST] Routine check #3 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+02749d39-31ea-4005-b2e3-04fb446dc40d	2026-04-18 18:09:39.941427+00	test-cold-7d6d1f0f-4	maintenance	INFO	[TEST] Routine check #4 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+c1de5573-0211-425c-90fa-d74eb6cd9ce0	2026-04-18 18:09:39.941447+00	test-cold-7d6d1f0f-3	maintenance	INFO	[TEST] Routine check #8 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+8a20a35d-ea8a-46e2-bd84-d6014cff3aaf	2026-04-18 18:09:39.941451+00	test-cold-7d6d1f0f-4	maintenance	INFO	[TEST] Routine check #9 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+0b200a6e-2295-4793-83df-208a8456aa75	2026-04-18 18:09:39.941475+00	test-cold-7d6d1f0f-3	maintenance	INFO	[TEST] Routine check #13 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+4ac30a21-ff63-4935-a224-670eb9adeda7	2026-04-18 18:09:39.941481+00	test-cold-7d6d1f0f-4	maintenance	INFO	[TEST] Routine check #14 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+f25c775e-bdb6-4a99-ad84-1e6affe9b5db	2026-04-18 18:09:39.941501+00	test-cold-7d6d1f0f-3	maintenance	INFO	[TEST] Routine check #18 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+9fa751e0-9111-4dfb-a327-aaed5e01e1ae	2026-04-18 18:09:39.941506+00	test-cold-7d6d1f0f-4	maintenance	INFO	[TEST] Routine check #19 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+3ef977c7-fc72-4818-86c8-8711538c5164	2026-04-18 18:09:39.941409+00	test-cold-7d6d1f0f-1	maintenance	INFO	[TEST] Routine check #1 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+d9c73ad8-4dbd-4bfc-847a-f7ec56c02cac	2026-04-18 18:09:39.941438+00	test-cold-7d6d1f0f-1	maintenance	INFO	[TEST] Routine check #6 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+cba242db-0af0-4df5-b7a9-e705c546a6fe	2026-04-18 18:09:39.941461+00	test-cold-7d6d1f0f-1	maintenance	INFO	[TEST] Routine check #11 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+c9e8a7fc-f3ad-45ad-8f22-f0ebd1c7802f	2026-04-18 18:09:39.941491+00	test-cold-7d6d1f0f-1	maintenance	INFO	[TEST] Routine check #16 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+77c0ddde-5d54-46bf-b739-1950cd86126f	2026-04-18 18:09:39.941525+00	test-cold-7d6d1f0f-3	maintenance	INFO	[TEST] Routine check #23 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+795cd07e-0b21-47eb-b7f9-459f3b640c29	2026-04-18 18:09:39.941533+00	test-cold-7d6d1f0f-4	maintenance	INFO	[TEST] Routine check #24 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+47b6728a-1cd9-4935-95cc-b3fc3567909e	2026-04-18 18:09:39.941516+00	test-cold-7d6d1f0f-1	maintenance	INFO	[TEST] Routine check #21 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+b2482d56-e15c-4337-8080-535e956d1fcf	2026-04-18 18:09:39.941511+00	test-cold-7d6d1f0f-0	maintenance	INFO	[TEST] Routine check #20 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+de73961b-6de2-4ea7-8773-bd4aaff6caab	2026-04-18 18:09:39.941521+00	test-cold-7d6d1f0f-2	maintenance	INFO	[TEST] Routine check #22 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+9261022d-9485-439c-8c66-6210c7dbba25	2026-04-18 18:09:39.941538+00	test-cold-7d6d1f0f-0	maintenance	INFO	[TEST] Routine check #25 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+6ca07d85-8eed-41af-8125-812bb7a92476	2026-04-18 18:09:39.941543+00	test-cold-7d6d1f0f-1	maintenance	INFO	[TEST] Routine check #26 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+2e3bd127-e892-4cc2-a8a3-dae198372bba	2026-04-18 18:09:39.941547+00	test-cold-7d6d1f0f-2	maintenance	INFO	[TEST] Routine check #27 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+d1650805-6d7e-4e6b-8823-b0f200d7ae1f	2026-04-18 18:09:39.941552+00	test-cold-7d6d1f0f-3	maintenance	INFO	[TEST] Routine check #28 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+b907cdbf-37ff-45a1-b88f-5774a340fe29	2026-04-18 18:09:39.941557+00	test-cold-7d6d1f0f-4	maintenance	INFO	[TEST] Routine check #29 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+50707ebc-6aa7-4c9c-8c17-0799ea9a136d	2026-04-18 18:09:39.941562+00	test-cold-7d6d1f0f-0	maintenance	INFO	[TEST] Routine check #30 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+1b2828de-043c-47aa-bc5e-569b80b0575d	2026-04-18 18:09:39.941567+00	test-cold-7d6d1f0f-1	maintenance	INFO	[TEST] Routine check #31 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+5aae0a15-186e-4c56-a6be-d92064aeecda	2026-04-18 18:09:39.941571+00	test-cold-7d6d1f0f-2	maintenance	INFO	[TEST] Routine check #32 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+6eef2b51-bff8-42d4-9746-832d782041d9	2026-04-18 18:09:39.941576+00	test-cold-7d6d1f0f-3	maintenance	INFO	[TEST] Routine check #33 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+cd81c603-55c0-48c0-98b7-981cd3800852	2026-04-18 18:09:39.941581+00	test-cold-7d6d1f0f-4	maintenance	INFO	[TEST] Routine check #34 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+9a1bdb15-935e-4077-9f37-421bd53bfded	2026-04-18 18:09:39.941585+00	test-cold-7d6d1f0f-0	maintenance	INFO	[TEST] Routine check #35 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+b0072a05-c9b8-4650-b8f0-dc97d0183d7a	2026-04-18 18:09:39.94159+00	test-cold-7d6d1f0f-1	maintenance	INFO	[TEST] Routine check #36 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+6750173e-797a-46a0-a9e0-3dbef1e9162c	2026-04-18 18:09:39.941594+00	test-cold-7d6d1f0f-2	maintenance	INFO	[TEST] Routine check #37 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+71727910-01cd-4493-85ba-e4d746c16b52	2026-04-18 18:09:39.941599+00	test-cold-7d6d1f0f-3	maintenance	INFO	[TEST] Routine check #38 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+0246ec37-c67c-483e-a0b3-800933146699	2026-04-18 18:09:39.941604+00	test-cold-7d6d1f0f-4	maintenance	INFO	[TEST] Routine check #39 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+eb3f6dd3-4155-453f-911d-8541190da7e5	2026-04-18 18:09:39.941608+00	test-cold-7d6d1f0f-0	maintenance	INFO	[TEST] Routine check #40 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+355f84fd-0569-495b-a5a6-d92a248a1e04	2026-04-18 18:09:39.941613+00	test-cold-7d6d1f0f-1	maintenance	INFO	[TEST] Routine check #41 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+4c7d9d31-97f5-4531-8f3a-ec7911306faa	2026-04-18 18:09:39.941623+00	test-cold-7d6d1f0f-2	maintenance	INFO	[TEST] Routine check #42 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+e13c0fa4-c014-4b30-b213-3e31ff47c996	2026-04-18 18:09:39.941628+00	test-cold-7d6d1f0f-3	maintenance	INFO	[TEST] Routine check #43 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+5ece9268-78b9-46db-824c-995c13225222	2026-04-18 18:09:39.941637+00	test-cold-7d6d1f0f-4	maintenance	INFO	[TEST] Routine check #44 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+30b6d356-f6a1-4a6a-8d24-551b4b31aee6	2026-04-18 18:09:39.941641+00	test-cold-7d6d1f0f-0	maintenance	INFO	[TEST] Routine check #45 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+76dabbe9-4035-479b-acb9-99aab0c425ca	2026-04-18 18:09:39.941646+00	test-cold-7d6d1f0f-1	maintenance	INFO	[TEST] Routine check #46 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+f9ac2168-deae-466f-b459-5e5d8fb6453f	2026-04-18 18:09:39.94165+00	test-cold-7d6d1f0f-2	maintenance	INFO	[TEST] Routine check #47 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+d611d54e-fb2f-4bbe-bd56-6be80963b89e	2026-04-18 18:09:39.941655+00	test-cold-7d6d1f0f-3	maintenance	INFO	[TEST] Routine check #48 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+808507af-ec23-4a61-b7d5-a78c6f0665c2	2026-04-18 18:09:39.941659+00	test-cold-7d6d1f0f-4	maintenance	INFO	[TEST] Routine check #49 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+ccdebef8-6188-42cc-95f6-663a58d4c5b4	2026-04-18 18:09:39.941663+00	test-cold-7d6d1f0f-0	maintenance	INFO	[TEST] Routine check #50 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+c65a4151-b5d4-45d2-a2b9-ee464a1a5b19	2026-04-18 18:09:39.941668+00	test-cold-7d6d1f0f-1	maintenance	INFO	[TEST] Routine check #51 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+2071a143-83c1-476b-b61c-b7f650a5cd12	2026-04-18 18:09:39.941672+00	test-cold-7d6d1f0f-2	maintenance	INFO	[TEST] Routine check #52 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+7d2b948f-8f62-4944-9031-47007b95b4aa	2026-04-18 18:09:39.941682+00	test-cold-7d6d1f0f-3	maintenance	INFO	[TEST] Routine check #53 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+cafffd81-4532-45b6-992b-8a5275e7f6e3	2026-04-18 18:09:39.941687+00	test-cold-7d6d1f0f-4	maintenance	INFO	[TEST] Routine check #54 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+223e2246-018b-455e-a6c2-cf12b41caa14	2026-04-18 18:09:39.941691+00	test-cold-7d6d1f0f-0	maintenance	INFO	[TEST] Routine check #55 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+ea33dcd0-7aa7-470c-9a3a-38bd9740768f	2026-04-18 18:09:39.941696+00	test-cold-7d6d1f0f-1	maintenance	INFO	[TEST] Routine check #56 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+91d5d04a-e715-4bb0-9e70-dde6c90f2c91	2026-04-18 18:09:39.9417+00	test-cold-7d6d1f0f-2	maintenance	INFO	[TEST] Routine check #57 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+ea216069-a6c5-4c97-8c43-7c57298ec397	2026-04-18 18:09:39.941705+00	test-cold-7d6d1f0f-3	maintenance	INFO	[TEST] Routine check #58 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+6ad5a85c-3896-4ac1-aa12-82afbd6caa43	2026-04-18 18:09:39.941709+00	test-cold-7d6d1f0f-4	maintenance	INFO	[TEST] Routine check #59 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+c82efd06-09f7-4a3c-b87d-d900680e479b	2026-04-18 18:09:39.941714+00	test-cold-7d6d1f0f-0	maintenance	INFO	[TEST] Routine check #60 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+c737e773-e569-4863-a817-08294e6cb140	2026-04-18 18:09:39.941722+00	test-cold-7d6d1f0f-1	maintenance	INFO	[TEST] Routine check #61 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+f399b70f-b5db-47f3-8863-6780ef16ca18	2026-04-18 18:09:39.941726+00	test-cold-7d6d1f0f-2	maintenance	INFO	[TEST] Routine check #62 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+b834bb04-d4e7-4edc-a575-75d345e453e9	2026-04-18 18:09:39.941733+00	test-cold-7d6d1f0f-3	maintenance	INFO	[TEST] Routine check #63 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+c89a8275-a7c8-42cb-b892-4ee10b3cd2f4	2026-04-18 18:09:39.941738+00	test-cold-7d6d1f0f-4	maintenance	INFO	[TEST] Routine check #64 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+0c66a816-4991-449d-8e7a-aca313281fb5	2026-04-18 18:09:39.941751+00	test-cold-7d6d1f0f-0	maintenance	INFO	[TEST] Routine check #65 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+b64f9f41-48b2-4310-8165-6d319d8754f4	2026-04-18 18:09:39.941756+00	test-cold-7d6d1f0f-1	maintenance	INFO	[TEST] Routine check #66 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+c2af1acb-798e-411b-8fcb-931102ac2f2a	2026-04-18 18:09:39.94176+00	test-cold-7d6d1f0f-2	maintenance	INFO	[TEST] Routine check #67 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+ccb69c33-9cef-4349-8d8a-89572077934d	2026-04-18 18:09:39.941765+00	test-cold-7d6d1f0f-3	maintenance	INFO	[TEST] Routine check #68 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+ae5838e3-666a-4295-b014-4667f826ef45	2026-04-18 18:09:39.941773+00	test-cold-7d6d1f0f-0	maintenance	INFO	[TEST] Routine check #70 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+ee720843-ea42-46fa-99d2-0f35cc8cdec6	2026-04-18 18:09:39.941769+00	test-cold-7d6d1f0f-4	maintenance	INFO	[TEST] Routine check #69 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+30011474-af1b-463b-ab42-958351d97161	2026-04-18 18:09:39.941777+00	test-cold-7d6d1f0f-1	maintenance	INFO	[TEST] Routine check #71 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+b9aede6e-eb37-479c-8a75-9496a23e97a9	2026-04-18 18:09:39.941782+00	test-cold-7d6d1f0f-2	maintenance	INFO	[TEST] Routine check #72 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+2819fb89-efaa-4c72-ac55-8e4034ee59e2	2026-04-18 18:09:39.941786+00	test-cold-7d6d1f0f-3	maintenance	INFO	[TEST] Routine check #73 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+10998aac-275a-44fe-8be6-f3d479627fc2	2026-04-18 18:09:39.941792+00	test-cold-7d6d1f0f-4	maintenance	INFO	[TEST] Routine check #74 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+4286ec0b-ccaa-452f-a003-0a320ec7886e	2026-04-18 18:09:39.941797+00	test-cold-7d6d1f0f-0	maintenance	INFO	[TEST] Routine check #75 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+2190f6d5-db5e-4544-b69e-113f8795df40	2026-04-18 18:09:39.941801+00	test-cold-7d6d1f0f-1	maintenance	INFO	[TEST] Routine check #76 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+66356b22-8951-4e56-94bc-ca4b36fb564c	2026-04-18 18:09:39.941811+00	test-cold-7d6d1f0f-2	maintenance	INFO	[TEST] Routine check #77 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+3350d339-69ce-4cfa-9e9e-eab50bb5310c	2026-04-18 18:09:39.941816+00	test-cold-7d6d1f0f-3	maintenance	INFO	[TEST] Routine check #78 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+c5a2783f-97dd-46e1-b55e-854013c79c87	2026-04-18 18:09:39.94182+00	test-cold-7d6d1f0f-4	maintenance	INFO	[TEST] Routine check #79 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+d28c2166-259f-41ee-a2d2-c19a3c3c49ce	2026-04-18 18:09:39.941824+00	test-cold-7d6d1f0f-0	maintenance	INFO	[TEST] Routine check #80 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+fc72ce5d-7f96-4604-983f-4cf136298ec5	2026-04-18 18:09:39.941829+00	test-cold-7d6d1f0f-1	maintenance	INFO	[TEST] Routine check #81 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+0722b856-9462-4cd3-960c-a32095d3ed14	2026-04-18 18:09:39.941833+00	test-cold-7d6d1f0f-2	maintenance	INFO	[TEST] Routine check #82 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+458a4fbc-279d-4ded-99cd-8873da62e311	2026-04-18 18:09:39.941838+00	test-cold-7d6d1f0f-3	maintenance	INFO	[TEST] Routine check #83 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+7dec9426-5ef6-4811-920d-3473e2b353a1	2026-04-18 18:09:39.941842+00	test-cold-7d6d1f0f-4	maintenance	INFO	[TEST] Routine check #84 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+bc533ae6-7b1e-43f3-9abb-f7a90fe6bd5c	2026-04-18 18:09:39.941847+00	test-cold-7d6d1f0f-0	maintenance	INFO	[TEST] Routine check #85 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+9608068f-8dd8-45eb-8f1c-b1be5ece1cf6	2026-04-18 18:09:39.941851+00	test-cold-7d6d1f0f-1	maintenance	INFO	[TEST] Routine check #86 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+acd2bd99-9c72-47e5-ab39-b13140c0f2ae	2026-04-18 18:09:39.941855+00	test-cold-7d6d1f0f-2	maintenance	INFO	[TEST] Routine check #87 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+bcf4bb69-b645-47e3-b9b0-7df15e2e8437	2026-04-18 18:09:39.94186+00	test-cold-7d6d1f0f-3	maintenance	INFO	[TEST] Routine check #88 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+bad5f7c3-c640-4f6c-827b-2f49ffeccb7c	2026-04-18 18:09:39.941864+00	test-cold-7d6d1f0f-4	maintenance	INFO	[TEST] Routine check #89 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+3ad9dced-7b4c-4778-b254-2a9965e1fca7	2026-04-18 18:09:39.941868+00	test-cold-7d6d1f0f-0	maintenance	INFO	[TEST] Routine check #90 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+2058e209-56ce-4812-b45e-3de612c39d78	2026-04-18 18:09:39.941872+00	test-cold-7d6d1f0f-1	maintenance	INFO	[TEST] Routine check #91 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+fd578d74-da27-4898-b1b5-4fb898d09211	2026-04-18 18:09:39.941877+00	test-cold-7d6d1f0f-2	maintenance	INFO	[TEST] Routine check #92 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+922db96c-171a-4ac3-99e0-98e1cebac153	2026-04-18 18:09:39.941885+00	test-cold-7d6d1f0f-3	maintenance	INFO	[TEST] Routine check #93 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+e6f9a7ab-78a6-4604-9d03-c198fbe9c772	2026-04-18 18:09:39.941892+00	test-cold-7d6d1f0f-4	maintenance	INFO	[TEST] Routine check #94 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+871fdde6-1668-4638-b5a7-807a5919c5f0	2026-04-18 18:09:39.941897+00	test-cold-7d6d1f0f-0	maintenance	INFO	[TEST] Routine check #95 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+8961f777-3735-49be-ade3-9877faa5a6c4	2026-04-18 18:09:39.941901+00	test-cold-7d6d1f0f-1	maintenance	INFO	[TEST] Routine check #96 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+245d68ba-232f-4fd6-8895-b766ea1ec1ee	2026-04-18 18:09:39.941905+00	test-cold-7d6d1f0f-2	maintenance	INFO	[TEST] Routine check #97 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+f8da83b3-b068-42f5-bf4a-f11dca5c16db	2026-04-18 18:09:39.941911+00	test-cold-7d6d1f0f-3	maintenance	INFO	[TEST] Routine check #98 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+1c138375-b5ac-4412-be57-49f8483e728e	2026-04-18 18:09:39.941916+00	test-cold-7d6d1f0f-4	maintenance	INFO	[TEST] Routine check #99 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:09:40.126097+00
+27dad422-5aaa-4533-a826-aa057f4261e7	2026-04-18 18:09:52.157451+00	test-dl-7d6d1f0f	unknown	ERROR	[TEST] Unrecognised log format (low_confidence)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:09:52.2475+00
+76c544bc-ebc3-4123-8e3d-5b49ce3e47a5	2026-04-18 18:09:52.157475+00	test-dl-7d6d1f0f	unknown	ERROR	[TEST] Unrecognised log format (low_confidence)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:09:52.257661+00
+85de1d27-7164-4130-801e-3969563e37eb	2026-04-18 18:09:52.157489+00	test-dl-7d6d1f0f	unknown	ERROR	[TEST] Unrecognised log format (low_confidence)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:09:52.258624+00
+fe12f95c-a1c8-47ff-8655-940ce36c0cfb	2026-04-18 18:10:00.256725+00	test-dl-7d6d1f0f	unknown	ERROR	[TEST] Unrecognised log format (spike_test_0)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:10:00.266627+00
+9fe95d19-bebc-4bbb-90d3-43e106d9d099	2026-04-18 18:10:00.26445+00	test-dl-7d6d1f0f	unknown	ERROR	[TEST] Unrecognised log format (spike_test_1)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:10:00.275496+00
+c3399947-0b00-40ff-8344-b33631e0b512	2026-04-18 18:10:00.265978+00	test-dl-7d6d1f0f	unknown	ERROR	[TEST] Unrecognised log format (spike_test_2)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:10:00.278613+00
+74b2a51c-27ae-4efd-be6e-7e6e6a62aeb9	2026-04-18 18:10:00.267044+00	test-dl-7d6d1f0f	unknown	ERROR	[TEST] Unrecognised log format (spike_test_3)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:10:00.280587+00
+0f91ab82-1c11-4e4f-8790-fd498e70386f	2026-04-18 18:10:00.26842+00	test-dl-7d6d1f0f	unknown	ERROR	[TEST] Unrecognised log format (spike_test_4)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:10:00.28167+00
+3a68742a-d073-4c16-abde-ea6476cdf4c8	2026-04-18 18:10:00.269712+00	test-dl-7d6d1f0f	unknown	ERROR	[TEST] Unrecognised log format (spike_test_5)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:10:00.282582+00
+32c5c1b1-37c7-42c5-9a5c-5ea4ee207bf8	2026-04-18 18:10:00.271346+00	test-dl-7d6d1f0f	unknown	ERROR	[TEST] Unrecognised log format (spike_test_6)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:10:00.283502+00
+0f8cccf8-9a11-4d48-bad2-e470bb4a1482	2026-04-18 18:10:00.272992+00	test-dl-7d6d1f0f	unknown	ERROR	[TEST] Unrecognised log format (spike_test_7)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:10:00.284494+00
+2b891abb-a115-4fbb-80c5-9ff8884a3545	2026-04-18 18:10:00.274713+00	test-dl-7d6d1f0f	unknown	ERROR	[TEST] Unrecognised log format (spike_test_8)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:10:00.285303+00
+d36d6908-aa12-4d19-acc1-3b6f58714396	2026-04-18 18:10:00.276088+00	test-dl-7d6d1f0f	unknown	ERROR	[TEST] Unrecognised log format (spike_test_9)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:10:00.287114+00
+b036fcee-70f3-4bf4-adbc-3f1c7a0769a9	2026-04-18 18:22:46.192947+00	test-p1-ec377c9c	sensor_failure	ERROR	[TEST] Temperature sensor malfunction	electrical	Thermal sensor overcurrent	Shut down and replace sensor	0.88	f		2026-04-18 18:22:46.315202+00
+f02f894e-845e-47e0-86a5-9d9764b41d33	2026-04-18 18:22:57.387368+00	test-p1-ec377c9c	sensor_failure	ERROR	[TEST] Temperature sensor malfunction	electrical	Thermal sensor overcurrent	Shut down and replace sensor	0.88	f		2026-04-18 18:22:57.396066+00
+385a44ce-f627-4861-96f1-66606919d31a	2026-04-18 18:23:15.464812+00	test-cold-ec377c9c-0	maintenance	INFO	[TEST] Routine check #0 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+45ffbae5-b821-4d9b-887a-2fa025b85942	2026-04-18 18:23:15.464856+00	test-cold-ec377c9c-2	maintenance	INFO	[TEST] Routine check #2 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+2d1111c7-f421-4645-96ab-ae8467855489	2026-04-18 18:23:15.464864+00	test-cold-ec377c9c-3	maintenance	INFO	[TEST] Routine check #3 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+af4a6f36-4be5-449d-b3c4-184abe55e240	2026-04-18 18:23:15.46487+00	test-cold-ec377c9c-4	maintenance	INFO	[TEST] Routine check #4 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+b445c86c-0082-47f2-944e-b80d621e39ce	2026-04-18 18:23:15.464876+00	test-cold-ec377c9c-0	maintenance	INFO	[TEST] Routine check #5 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+74e5641b-b8ce-4f83-a482-ff390cfb3a7d	2026-04-18 18:23:15.464847+00	test-cold-ec377c9c-1	maintenance	INFO	[TEST] Routine check #1 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+5ee5ee36-0678-49d9-85a0-a6edf1be8f74	2026-04-18 18:23:15.464888+00	test-cold-ec377c9c-2	maintenance	INFO	[TEST] Routine check #7 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+9f1a8fd3-1488-4e71-9ec9-857c72e2fbab	2026-04-18 18:23:15.464882+00	test-cold-ec377c9c-1	maintenance	INFO	[TEST] Routine check #6 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+ed85e805-e5be-427d-a641-14379a67d93e	2026-04-18 18:23:15.464894+00	test-cold-ec377c9c-3	maintenance	INFO	[TEST] Routine check #8 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+06f8d446-e835-47b1-a658-b154d96d58e7	2026-04-18 18:23:15.4649+00	test-cold-ec377c9c-4	maintenance	INFO	[TEST] Routine check #9 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+31eeac7f-9b24-422a-8eaf-fbdf80e61998	2026-04-18 18:23:15.464905+00	test-cold-ec377c9c-0	maintenance	INFO	[TEST] Routine check #10 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+3204e2b8-1ba8-4c42-ad09-7c875c56780a	2026-04-18 18:23:15.464911+00	test-cold-ec377c9c-1	maintenance	INFO	[TEST] Routine check #11 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+a965d0d4-ed7b-4822-a938-a7add835240f	2026-04-18 18:23:15.464916+00	test-cold-ec377c9c-2	maintenance	INFO	[TEST] Routine check #12 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+c826c4b1-8d9e-4f3f-80ae-bacc8a19e9f8	2026-04-18 18:23:15.464922+00	test-cold-ec377c9c-3	maintenance	INFO	[TEST] Routine check #13 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+957f5dce-3936-49b7-869f-af178eb2db1a	2026-04-18 18:23:15.464928+00	test-cold-ec377c9c-4	maintenance	INFO	[TEST] Routine check #14 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+b3e82b8f-d17d-4f74-ac08-526e0a5f60d5	2026-04-18 18:23:15.464933+00	test-cold-ec377c9c-0	maintenance	INFO	[TEST] Routine check #15 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+414242b0-868e-4d5d-bc66-d12e778eab05	2026-04-18 18:23:15.464938+00	test-cold-ec377c9c-1	maintenance	INFO	[TEST] Routine check #16 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+dcec2c13-1808-4ba2-b45c-627bf94a5804	2026-04-18 18:23:15.464943+00	test-cold-ec377c9c-2	maintenance	INFO	[TEST] Routine check #17 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+b4a24bca-da11-48ee-9b73-c13431776118	2026-04-18 18:23:15.464949+00	test-cold-ec377c9c-3	maintenance	INFO	[TEST] Routine check #18 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+e93e6371-0b0c-479a-9499-7ad02143c1c5	2026-04-18 18:23:15.464954+00	test-cold-ec377c9c-4	maintenance	INFO	[TEST] Routine check #19 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+2140a2f0-2cf9-4220-8c74-ab4e007a6dd5	2026-04-18 18:23:15.46496+00	test-cold-ec377c9c-0	maintenance	INFO	[TEST] Routine check #20 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+d418bbaa-8ef3-4f77-9ef7-e76db80cc10b	2026-04-18 18:23:15.464965+00	test-cold-ec377c9c-1	maintenance	INFO	[TEST] Routine check #21 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+70d09197-dc07-49fc-90de-e8af1dc287d1	2026-04-18 18:23:15.464971+00	test-cold-ec377c9c-2	maintenance	INFO	[TEST] Routine check #22 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+e03ec516-996c-4d52-a7db-8434dbfa741a	2026-04-18 18:23:15.464977+00	test-cold-ec377c9c-3	maintenance	INFO	[TEST] Routine check #23 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+1e5956ce-9475-4237-9ad4-e32a115ab15b	2026-04-18 18:23:15.464997+00	test-cold-ec377c9c-4	maintenance	INFO	[TEST] Routine check #24 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+b37a560a-fed1-4628-856d-11bdd51e006e	2026-04-18 18:23:15.465026+00	test-cold-ec377c9c-0	maintenance	INFO	[TEST] Routine check #25 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+d1e34a9d-ab62-46f3-a26a-23d82964c468	2026-04-18 18:23:15.465032+00	test-cold-ec377c9c-1	maintenance	INFO	[TEST] Routine check #26 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+31d34925-b0f9-47ac-bfc2-e5a0aec64a85	2026-04-18 18:23:15.465038+00	test-cold-ec377c9c-2	maintenance	INFO	[TEST] Routine check #27 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+f6365ed5-5e9f-4381-8899-cf364c4ceac4	2026-04-18 18:23:15.465043+00	test-cold-ec377c9c-3	maintenance	INFO	[TEST] Routine check #28 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+18f2df58-6f21-4cf4-ba54-2c6827581db3	2026-04-18 18:23:15.465049+00	test-cold-ec377c9c-4	maintenance	INFO	[TEST] Routine check #29 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+378e986c-ecbd-4e7c-97b2-f7cfcbbe0c5a	2026-04-18 18:23:15.465054+00	test-cold-ec377c9c-0	maintenance	INFO	[TEST] Routine check #30 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+38fe4a50-5e69-403c-b7c2-7cfbefabb2f4	2026-04-18 18:23:15.465102+00	test-cold-ec377c9c-1	maintenance	INFO	[TEST] Routine check #31 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+63655d45-cea0-4c2b-a23a-6fbcce56d397	2026-04-18 18:23:15.465132+00	test-cold-ec377c9c-2	maintenance	INFO	[TEST] Routine check #32 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+ed7a4065-624c-4694-800b-fd69538a38e4	2026-04-18 18:23:15.465147+00	test-cold-ec377c9c-3	maintenance	INFO	[TEST] Routine check #33 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+ab1c689f-88dc-437c-be6f-c4d919000b94	2026-04-18 18:23:15.465157+00	test-cold-ec377c9c-4	maintenance	INFO	[TEST] Routine check #34 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+364669a5-2da1-4ad4-b40a-ea36d0264760	2026-04-18 18:23:15.465195+00	test-cold-ec377c9c-0	maintenance	INFO	[TEST] Routine check #35 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+a764792d-0060-41c2-8902-13208166c6a0	2026-04-18 18:23:15.465207+00	test-cold-ec377c9c-1	maintenance	INFO	[TEST] Routine check #36 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+5ed23ee1-c8d4-4092-86af-edbda521673b	2026-04-18 18:23:15.465216+00	test-cold-ec377c9c-2	maintenance	INFO	[TEST] Routine check #37 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+291ba29a-6c86-44b8-87fa-b27c2a70ec09	2026-04-18 18:23:15.465225+00	test-cold-ec377c9c-3	maintenance	INFO	[TEST] Routine check #38 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+b9c473e8-8ae7-4203-b5c2-9851e265b0cf	2026-04-18 18:23:15.465251+00	test-cold-ec377c9c-4	maintenance	INFO	[TEST] Routine check #39 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+681f4da1-b255-4f97-862f-353b92024227	2026-04-18 18:23:15.465261+00	test-cold-ec377c9c-0	maintenance	INFO	[TEST] Routine check #40 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+d6fc0155-f81a-499c-8951-767637e3f9f7	2026-04-18 18:23:15.46529+00	test-cold-ec377c9c-1	maintenance	INFO	[TEST] Routine check #41 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+95bd90bf-4117-43ed-a626-809368280c1f	2026-04-18 18:23:15.465314+00	test-cold-ec377c9c-2	maintenance	INFO	[TEST] Routine check #42 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+c42c8784-d2e8-408f-ba4c-73ab4c79a9af	2026-04-18 18:23:15.465321+00	test-cold-ec377c9c-3	maintenance	INFO	[TEST] Routine check #43 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+bf2295ba-1198-4c75-bb38-ffa04293be26	2026-04-18 18:23:15.46533+00	test-cold-ec377c9c-4	maintenance	INFO	[TEST] Routine check #44 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+8e44348b-1134-4e9b-b2b9-ddb1f13aaf88	2026-04-18 18:23:15.465336+00	test-cold-ec377c9c-0	maintenance	INFO	[TEST] Routine check #45 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+1f8ca180-723f-4155-a7fd-b1b9480ab1a2	2026-04-18 18:23:15.465368+00	test-cold-ec377c9c-1	maintenance	INFO	[TEST] Routine check #46 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+db4d6fe5-f6e7-4c32-9cb1-bc46f98c96fe	2026-04-18 18:23:15.465375+00	test-cold-ec377c9c-2	maintenance	INFO	[TEST] Routine check #47 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+dcbe9850-b3b6-4399-8d48-0c9521a7cda2	2026-04-18 18:23:15.46538+00	test-cold-ec377c9c-3	maintenance	INFO	[TEST] Routine check #48 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+f90134a5-6e8c-408c-ba30-9f9164106561	2026-04-18 18:23:15.465386+00	test-cold-ec377c9c-4	maintenance	INFO	[TEST] Routine check #49 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+dfde3e19-91b6-41a6-bf1c-ba99f932c9dc	2026-04-18 18:23:15.465393+00	test-cold-ec377c9c-0	maintenance	INFO	[TEST] Routine check #50 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+e38caa3d-5b4e-4eda-8cb0-9252ea63162b	2026-04-18 18:23:15.465398+00	test-cold-ec377c9c-1	maintenance	INFO	[TEST] Routine check #51 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+8e9316ce-48e5-4a86-a2f1-e264d30d2b34	2026-04-18 18:23:15.465404+00	test-cold-ec377c9c-2	maintenance	INFO	[TEST] Routine check #52 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+098d3a05-eb92-474c-9872-5fc1533c0a6a	2026-04-18 18:23:15.465411+00	test-cold-ec377c9c-3	maintenance	INFO	[TEST] Routine check #53 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+6dbde195-a2ca-45a7-8ac8-1279bed1d7f8	2026-04-18 18:23:15.465416+00	test-cold-ec377c9c-4	maintenance	INFO	[TEST] Routine check #54 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+b8c472e6-c60b-4a43-849d-170f5afc3809	2026-04-18 18:23:15.465422+00	test-cold-ec377c9c-0	maintenance	INFO	[TEST] Routine check #55 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+2a02a26c-c104-4ffb-a5aa-98c17cb38985	2026-04-18 18:23:15.465427+00	test-cold-ec377c9c-1	maintenance	INFO	[TEST] Routine check #56 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+e9bda8ea-41dd-445f-be29-daab294dab58	2026-04-18 18:23:15.465432+00	test-cold-ec377c9c-2	maintenance	INFO	[TEST] Routine check #57 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+98919dbd-3477-4577-a583-42f88c46d9f7	2026-04-18 18:23:15.465437+00	test-cold-ec377c9c-3	maintenance	INFO	[TEST] Routine check #58 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+04c241a6-12c0-4ef6-872d-dbae50d9adb9	2026-04-18 18:23:15.465443+00	test-cold-ec377c9c-4	maintenance	INFO	[TEST] Routine check #59 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+b25d434a-0cb5-4336-a632-f4c95a08c5b6	2026-04-18 18:23:15.465448+00	test-cold-ec377c9c-0	maintenance	INFO	[TEST] Routine check #60 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+0e5a687e-ec27-4745-a871-d756fbfaebbd	2026-04-18 18:23:15.465453+00	test-cold-ec377c9c-1	maintenance	INFO	[TEST] Routine check #61 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+ac4e82a0-bcf0-40e7-8c32-2f3030bf2683	2026-04-18 18:23:15.465459+00	test-cold-ec377c9c-2	maintenance	INFO	[TEST] Routine check #62 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+16603520-cda1-4f43-bdf9-a4105a69daff	2026-04-18 18:23:15.465465+00	test-cold-ec377c9c-3	maintenance	INFO	[TEST] Routine check #63 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+f7480bdb-67b0-4484-80de-e02deaf56537	2026-04-18 18:23:15.46547+00	test-cold-ec377c9c-4	maintenance	INFO	[TEST] Routine check #64 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+3d1033db-e042-4998-b3cd-66fb576b721d	2026-04-18 18:23:15.465483+00	test-cold-ec377c9c-0	maintenance	INFO	[TEST] Routine check #65 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+eeb73b1d-a61a-402c-bb2e-a1b50a80ac79	2026-04-18 18:23:15.465489+00	test-cold-ec377c9c-1	maintenance	INFO	[TEST] Routine check #66 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+55d5e75d-19b6-4ad7-8cef-0c131e01de1d	2026-04-18 18:23:15.465495+00	test-cold-ec377c9c-2	maintenance	INFO	[TEST] Routine check #67 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+973dda2f-a198-4d07-8dee-840cb8991cd2	2026-04-18 18:23:15.465503+00	test-cold-ec377c9c-3	maintenance	INFO	[TEST] Routine check #68 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+49e8bb4e-bce3-494c-92f3-9dc897021e4d	2026-04-18 18:23:15.465508+00	test-cold-ec377c9c-4	maintenance	INFO	[TEST] Routine check #69 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+52eb1de5-69d8-497d-adb1-9b274fa555d7	2026-04-18 18:23:15.465513+00	test-cold-ec377c9c-0	maintenance	INFO	[TEST] Routine check #70 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+8b50c562-791d-458d-8b1a-91decdaf25b4	2026-04-18 18:23:15.465518+00	test-cold-ec377c9c-1	maintenance	INFO	[TEST] Routine check #71 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+e6efbc5d-619c-43a3-9465-9673c4ca0356	2026-04-18 18:23:15.465523+00	test-cold-ec377c9c-2	maintenance	INFO	[TEST] Routine check #72 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+4a6a3c36-a043-479d-bc75-694036bd700f	2026-04-18 18:23:15.465528+00	test-cold-ec377c9c-3	maintenance	INFO	[TEST] Routine check #73 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+2cd7a2b7-2b88-4d1d-bed2-91205398c6b1	2026-04-18 18:23:15.465533+00	test-cold-ec377c9c-4	maintenance	INFO	[TEST] Routine check #74 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+cc6175d7-06c2-46d9-93ca-83e2e659e1b9	2026-04-18 18:23:15.465538+00	test-cold-ec377c9c-0	maintenance	INFO	[TEST] Routine check #75 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+062f498e-9896-4368-884c-85ac48f1af81	2026-04-18 18:23:15.465543+00	test-cold-ec377c9c-1	maintenance	INFO	[TEST] Routine check #76 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+d8f3548c-fe5b-43a7-8fd2-a273b83fe2e0	2026-04-18 18:23:15.46555+00	test-cold-ec377c9c-2	maintenance	INFO	[TEST] Routine check #77 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+96e22145-fc5d-43e4-862c-9ea8081a7a28	2026-04-18 18:23:15.465555+00	test-cold-ec377c9c-3	maintenance	INFO	[TEST] Routine check #78 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+3c6577a4-cfd0-4cb7-8f30-2e16a286daeb	2026-04-18 18:23:15.46556+00	test-cold-ec377c9c-4	maintenance	INFO	[TEST] Routine check #79 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+e01bb4e6-9606-4ec7-a961-0b9d45ecb29a	2026-04-18 18:23:15.465565+00	test-cold-ec377c9c-0	maintenance	INFO	[TEST] Routine check #80 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+8bf23b0e-6461-4d2d-85f8-13009927adf3	2026-04-18 18:23:15.465571+00	test-cold-ec377c9c-1	maintenance	INFO	[TEST] Routine check #81 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+8c3f345f-5a4b-4646-ab33-122bc898a9a6	2026-04-18 18:23:15.465576+00	test-cold-ec377c9c-2	maintenance	INFO	[TEST] Routine check #82 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+5c56b785-df8b-4f81-882f-b13e7026ea4c	2026-04-18 18:23:15.465581+00	test-cold-ec377c9c-3	maintenance	INFO	[TEST] Routine check #83 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+30af3ad8-ddbc-4079-9407-2de68db2949c	2026-04-18 18:23:15.465587+00	test-cold-ec377c9c-4	maintenance	INFO	[TEST] Routine check #84 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+f978ca3c-a8ac-4cb8-b508-447566565b8e	2026-04-18 18:23:15.465592+00	test-cold-ec377c9c-0	maintenance	INFO	[TEST] Routine check #85 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+e1ca5b91-3e42-4bc2-bca3-ea8032ec083b	2026-04-18 18:23:15.465597+00	test-cold-ec377c9c-1	maintenance	INFO	[TEST] Routine check #86 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+4e791558-105b-4ff3-80a0-0f5feb22d5a7	2026-04-18 18:23:15.465602+00	test-cold-ec377c9c-2	maintenance	INFO	[TEST] Routine check #87 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+90abe8d3-f7f0-460d-acea-b082461f7e27	2026-04-18 18:23:15.465607+00	test-cold-ec377c9c-3	maintenance	INFO	[TEST] Routine check #88 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+8334ea43-8798-48db-b345-85d450fab18f	2026-04-18 18:23:15.465612+00	test-cold-ec377c9c-4	maintenance	INFO	[TEST] Routine check #89 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+ef400bf7-60f8-4140-b555-a17f47701920	2026-04-18 18:23:15.465617+00	test-cold-ec377c9c-0	maintenance	INFO	[TEST] Routine check #90 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+260a05b1-c280-45d8-9d54-6a7540f929ce	2026-04-18 18:23:15.465622+00	test-cold-ec377c9c-1	maintenance	INFO	[TEST] Routine check #91 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+df068627-3992-43f3-b371-745bac98bfe0	2026-04-18 18:23:15.465627+00	test-cold-ec377c9c-2	maintenance	INFO	[TEST] Routine check #92 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+136b73b6-0b77-4ada-aba5-c0916deff42b	2026-04-18 18:23:15.465639+00	test-cold-ec377c9c-3	maintenance	INFO	[TEST] Routine check #93 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+2289e26b-b20f-4f4d-80a2-4c9720ce1e62	2026-04-18 18:23:15.465644+00	test-cold-ec377c9c-4	maintenance	INFO	[TEST] Routine check #94 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+dcb2daa5-f311-4e7d-a296-a70a45a5bafa	2026-04-18 18:23:15.465649+00	test-cold-ec377c9c-0	maintenance	INFO	[TEST] Routine check #95 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+b3c66123-2c61-4a78-8847-144c769d561d	2026-04-18 18:23:15.465654+00	test-cold-ec377c9c-1	maintenance	INFO	[TEST] Routine check #96 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+0aafd17e-6ede-438d-9752-bded9ec08b9a	2026-04-18 18:23:15.46566+00	test-cold-ec377c9c-2	maintenance	INFO	[TEST] Routine check #97 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+02e197dc-7998-4922-8b58-637b4149ba1c	2026-04-18 18:23:15.465678+00	test-cold-ec377c9c-3	maintenance	INFO	[TEST] Routine check #98 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+44ef4ddd-553a-448b-9bb6-42dec32117e9	2026-04-18 18:23:15.465685+00	test-cold-ec377c9c-4	maintenance	INFO	[TEST] Routine check #99 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:23:15.594898+00
+c3f61d70-97f8-47b8-9a92-0bb204814136	2026-04-18 18:23:27.702263+00	test-dl-ec377c9c	unknown	ERROR	[TEST] Unrecognised log format (low_confidence)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:23:27.768889+00
+38181f5c-b09f-4807-973c-867f53174a45	2026-04-18 18:23:27.702289+00	test-dl-ec377c9c	unknown	ERROR	[TEST] Unrecognised log format (low_confidence)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:23:27.774976+00
+0f635140-162c-46e4-8c6e-8d3abf51bc5b	2026-04-18 18:23:27.702297+00	test-dl-ec377c9c	unknown	ERROR	[TEST] Unrecognised log format (low_confidence)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:23:27.776637+00
+7cc1ef06-9297-43a6-ba08-248682bf1938	2026-04-18 18:23:35.787347+00	test-dl-ec377c9c	unknown	ERROR	[TEST] Unrecognised log format (spike_test_0)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:23:35.791025+00
+0dbe2061-9af1-48d8-9d5b-38f649b39877	2026-04-18 18:23:35.789715+00	test-dl-ec377c9c	unknown	ERROR	[TEST] Unrecognised log format (spike_test_1)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:23:35.793882+00
+602c3f49-3d2f-49c7-ad3c-6743ae5c806c	2026-04-18 18:23:35.790847+00	test-dl-ec377c9c	unknown	ERROR	[TEST] Unrecognised log format (spike_test_2)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:23:35.795278+00
+e5bacd37-bc05-4beb-a4ff-46107362248e	2026-04-18 18:23:35.791438+00	test-dl-ec377c9c	unknown	ERROR	[TEST] Unrecognised log format (spike_test_3)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:23:35.796583+00
+f4a1dc07-7d0e-4abe-9d43-51f96b01a21c	2026-04-18 18:23:35.792492+00	test-dl-ec377c9c	unknown	ERROR	[TEST] Unrecognised log format (spike_test_4)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:23:35.798933+00
+3fece606-316c-4c20-9ccd-0e355cd83bff	2026-04-18 18:23:35.793201+00	test-dl-ec377c9c	unknown	ERROR	[TEST] Unrecognised log format (spike_test_5)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:23:35.799847+00
+9cf586b1-5130-469e-8c87-d53e9e1097e9	2026-04-18 18:23:35.794151+00	test-dl-ec377c9c	unknown	ERROR	[TEST] Unrecognised log format (spike_test_6)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:23:35.801606+00
+6568ac95-3d24-45dd-95a2-01eaaab64ca4	2026-04-18 18:23:35.795026+00	test-dl-ec377c9c	unknown	ERROR	[TEST] Unrecognised log format (spike_test_7)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:23:35.803364+00
+92e12e55-e684-43dd-b78b-f6ac7c90257b	2026-04-18 18:23:35.795659+00	test-dl-ec377c9c	unknown	ERROR	[TEST] Unrecognised log format (spike_test_8)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:23:35.804939+00
+4ac87f59-7c41-42b5-afa8-eebe98f6bb74	2026-04-18 18:23:35.796456+00	test-dl-ec377c9c	unknown	ERROR	[TEST] Unrecognised log format (spike_test_9)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:23:35.806323+00
+5fed7982-9836-496d-8489-f09c3b5f8aa4	2026-04-18 18:35:16.939069+00	test-p0-f9ff5a7d	alarm	CRITICAL	[TEST] Fire alarm activated in zone 3	fire	Fire detected near conveyor belt	Evacuate zone 3 immediately	0.99	f		2026-04-18 18:35:17.064211+00
+6ca0883d-c5f2-43da-8803-6ca328dc058e	2026-04-18 18:35:45.203206+00	test-cold-f9ff5a7d-0	maintenance	INFO	[TEST] Routine check #0 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+9fb693c8-3812-4bbf-9210-f7707742daa7	2026-04-18 18:35:45.203231+00	test-cold-f9ff5a7d-1	maintenance	INFO	[TEST] Routine check #1 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+5706684d-53df-4cf2-a143-e48bd5b2570d	2026-04-18 18:35:45.203245+00	test-cold-f9ff5a7d-3	maintenance	INFO	[TEST] Routine check #3 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+983eb5eb-9093-41fc-8ba0-68dd984da55c	2026-04-18 18:35:45.20324+00	test-cold-f9ff5a7d-2	maintenance	INFO	[TEST] Routine check #2 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+44b47b0d-109b-410e-9c15-5745b25b61b8	2026-04-18 18:35:45.20325+00	test-cold-f9ff5a7d-4	maintenance	INFO	[TEST] Routine check #4 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+be2b28e7-2a77-4dca-b372-8e721ff6cb86	2026-04-18 18:35:45.203255+00	test-cold-f9ff5a7d-0	maintenance	INFO	[TEST] Routine check #5 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+2ed3768c-cfbf-428c-ba74-da4c59b0c97c	2026-04-18 18:35:45.203259+00	test-cold-f9ff5a7d-1	maintenance	INFO	[TEST] Routine check #6 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+e49d30f2-f27b-42d8-9044-cc54b7344bae	2026-04-18 18:35:45.203263+00	test-cold-f9ff5a7d-2	maintenance	INFO	[TEST] Routine check #7 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+04b18fc4-8c45-4896-bda5-3bea694c989f	2026-04-18 18:35:45.203268+00	test-cold-f9ff5a7d-3	maintenance	INFO	[TEST] Routine check #8 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+b7b1bcde-408d-4c58-b763-1670fbe57020	2026-04-18 18:35:45.203272+00	test-cold-f9ff5a7d-4	maintenance	INFO	[TEST] Routine check #9 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+9c35758b-862d-481b-b400-bb80ef55b3f9	2026-04-18 18:35:45.203276+00	test-cold-f9ff5a7d-0	maintenance	INFO	[TEST] Routine check #10 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+3f71aea8-8fb4-4d92-a59a-0f9fdf404b93	2026-04-18 18:35:45.203281+00	test-cold-f9ff5a7d-1	maintenance	INFO	[TEST] Routine check #11 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+0fd0fb3a-7a2b-409c-8227-0d1b934b7ba1	2026-04-18 18:35:45.203286+00	test-cold-f9ff5a7d-2	maintenance	INFO	[TEST] Routine check #12 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+ce161b3d-527c-42a1-b4e4-eec7b9457f9c	2026-04-18 18:35:45.203291+00	test-cold-f9ff5a7d-3	maintenance	INFO	[TEST] Routine check #13 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+86d91862-a5fd-417d-b197-f26e3b851518	2026-04-18 18:35:45.203296+00	test-cold-f9ff5a7d-4	maintenance	INFO	[TEST] Routine check #14 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+ef946d8e-ff50-49a3-af68-e856ffda4e10	2026-04-18 18:35:45.203301+00	test-cold-f9ff5a7d-0	maintenance	INFO	[TEST] Routine check #15 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+9984909a-9e77-4ce9-8ad3-d34c84295345	2026-04-18 18:35:45.203306+00	test-cold-f9ff5a7d-1	maintenance	INFO	[TEST] Routine check #16 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+143678af-65f3-4a28-aeca-c49f5a0fc368	2026-04-18 18:35:45.203311+00	test-cold-f9ff5a7d-2	maintenance	INFO	[TEST] Routine check #17 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+e5df76c6-e887-45da-9cdd-f084466398ad	2026-04-18 18:35:45.203316+00	test-cold-f9ff5a7d-3	maintenance	INFO	[TEST] Routine check #18 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+6c45fab2-689c-415b-b821-96bd2cbd5377	2026-04-18 18:35:45.20332+00	test-cold-f9ff5a7d-4	maintenance	INFO	[TEST] Routine check #19 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+f81626b7-bc18-41f4-a7de-8c3df68980ef	2026-04-18 18:35:45.203324+00	test-cold-f9ff5a7d-0	maintenance	INFO	[TEST] Routine check #20 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+7a4b2b86-f7aa-4130-859e-1083f8a7879c	2026-04-18 18:35:45.203328+00	test-cold-f9ff5a7d-1	maintenance	INFO	[TEST] Routine check #21 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+b233bb5e-ddb5-47fc-90ff-7554b9c19319	2026-04-18 18:35:45.203332+00	test-cold-f9ff5a7d-2	maintenance	INFO	[TEST] Routine check #22 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+b53a5e19-9199-45ae-90db-508ed98dfa63	2026-04-18 18:35:45.203336+00	test-cold-f9ff5a7d-3	maintenance	INFO	[TEST] Routine check #23 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+a2168913-edad-4072-b0c8-915a98f0198e	2026-04-18 18:35:45.203339+00	test-cold-f9ff5a7d-4	maintenance	INFO	[TEST] Routine check #24 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+9f20f6b7-6574-4284-a83a-444708a3cb62	2026-04-18 18:35:45.203343+00	test-cold-f9ff5a7d-0	maintenance	INFO	[TEST] Routine check #25 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+92737ebb-0763-402d-bb30-918cf325bcbc	2026-04-18 18:35:45.203347+00	test-cold-f9ff5a7d-1	maintenance	INFO	[TEST] Routine check #26 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+41b5353f-7ab4-4de9-a4f6-6a4930911089	2026-04-18 18:35:45.20335+00	test-cold-f9ff5a7d-2	maintenance	INFO	[TEST] Routine check #27 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+bc37a95a-5a3b-4df4-9efc-b566cc972fcd	2026-04-18 18:35:45.203354+00	test-cold-f9ff5a7d-3	maintenance	INFO	[TEST] Routine check #28 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+68cb7f07-f3aa-4942-ab48-4c5c5244dc09	2026-04-18 18:35:45.203358+00	test-cold-f9ff5a7d-4	maintenance	INFO	[TEST] Routine check #29 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+5e754511-af43-49e0-ad3a-837bf7bb337b	2026-04-18 18:35:45.203362+00	test-cold-f9ff5a7d-0	maintenance	INFO	[TEST] Routine check #30 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+8f4ed457-db63-4664-8e5b-d4b6157081bb	2026-04-18 18:35:45.203366+00	test-cold-f9ff5a7d-1	maintenance	INFO	[TEST] Routine check #31 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+d971b8b4-2cc6-4a12-886f-e113cbcfceb3	2026-04-18 18:35:45.203369+00	test-cold-f9ff5a7d-2	maintenance	INFO	[TEST] Routine check #32 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+edfb8bca-9388-43d1-b1ca-eef7c1eb3bdf	2026-04-18 18:35:45.203373+00	test-cold-f9ff5a7d-3	maintenance	INFO	[TEST] Routine check #33 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+05f0db93-2686-441d-bbc3-d88b5d2a02f0	2026-04-18 18:35:45.203377+00	test-cold-f9ff5a7d-4	maintenance	INFO	[TEST] Routine check #34 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+b82c1486-7889-4c0c-b398-437b056b511a	2026-04-18 18:35:45.203381+00	test-cold-f9ff5a7d-0	maintenance	INFO	[TEST] Routine check #35 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+5f4b9438-17a8-4f36-88a1-e0b469aeb00b	2026-04-18 18:35:45.203385+00	test-cold-f9ff5a7d-1	maintenance	INFO	[TEST] Routine check #36 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+0c42c26b-fa02-4f24-b55e-d2e293427e31	2026-04-18 18:35:45.20343+00	test-cold-f9ff5a7d-2	maintenance	INFO	[TEST] Routine check #37 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+7ced9f0a-8b5a-4719-86bc-64aecddb790c	2026-04-18 18:35:45.203439+00	test-cold-f9ff5a7d-3	maintenance	INFO	[TEST] Routine check #38 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+bd70ae9f-327a-4873-a30b-80c128b72158	2026-04-18 18:35:45.203444+00	test-cold-f9ff5a7d-4	maintenance	INFO	[TEST] Routine check #39 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+9ec35996-131d-4abb-b5d3-631152edf88c	2026-04-18 18:35:45.203449+00	test-cold-f9ff5a7d-0	maintenance	INFO	[TEST] Routine check #40 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+170367d1-4281-40c5-b304-0d7de691a3d1	2026-04-18 18:35:45.203454+00	test-cold-f9ff5a7d-1	maintenance	INFO	[TEST] Routine check #41 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+febdb63a-6041-4bee-974a-cf319fc2c3b4	2026-04-18 18:35:45.203457+00	test-cold-f9ff5a7d-2	maintenance	INFO	[TEST] Routine check #42 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+66f83fca-ddf7-4210-804b-cff756ebbc4c	2026-04-18 18:35:45.203461+00	test-cold-f9ff5a7d-3	maintenance	INFO	[TEST] Routine check #43 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+8af9d445-e485-4073-9181-4b4db8137662	2026-04-18 18:35:45.203465+00	test-cold-f9ff5a7d-4	maintenance	INFO	[TEST] Routine check #44 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+647f6a8e-7f94-41a0-bd41-d6c44884f726	2026-04-18 18:35:45.203469+00	test-cold-f9ff5a7d-0	maintenance	INFO	[TEST] Routine check #45 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+a3d86d09-0077-4cd1-95b5-603c189ecfd5	2026-04-18 18:35:45.203504+00	test-cold-f9ff5a7d-1	maintenance	INFO	[TEST] Routine check #46 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+7d19d204-91c4-41d5-89f6-28646fa86f10	2026-04-18 18:35:45.20351+00	test-cold-f9ff5a7d-2	maintenance	INFO	[TEST] Routine check #47 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+686a4e53-7c3a-4e93-9ae5-9cc211b5aed0	2026-04-18 18:35:45.203515+00	test-cold-f9ff5a7d-3	maintenance	INFO	[TEST] Routine check #48 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+02f16543-97bc-4ba6-9a3c-eafeeebb89fd	2026-04-18 18:35:45.203521+00	test-cold-f9ff5a7d-4	maintenance	INFO	[TEST] Routine check #49 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+aa2f06f0-1a6c-4859-b94c-37edb061a95c	2026-04-18 18:35:45.203529+00	test-cold-f9ff5a7d-0	maintenance	INFO	[TEST] Routine check #50 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+f38bf86d-1de0-41a6-afbd-75f6af33a674	2026-04-18 18:35:45.203534+00	test-cold-f9ff5a7d-1	maintenance	INFO	[TEST] Routine check #51 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+aaa297c3-3c3d-4b73-a0c1-4692360b2c9d	2026-04-18 18:35:45.203541+00	test-cold-f9ff5a7d-2	maintenance	INFO	[TEST] Routine check #52 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+be92bb03-1705-463c-8f31-7880019e304e	2026-04-18 18:35:45.203549+00	test-cold-f9ff5a7d-3	maintenance	INFO	[TEST] Routine check #53 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+774fb6cf-0f64-4416-b68e-0df21e5271c1	2026-04-18 18:35:45.203556+00	test-cold-f9ff5a7d-4	maintenance	INFO	[TEST] Routine check #54 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+fb292329-fd20-49e9-a329-59ee47a98cf2	2026-04-18 18:35:45.203563+00	test-cold-f9ff5a7d-0	maintenance	INFO	[TEST] Routine check #55 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+31a01068-1818-43b2-b6af-08d97c63cdca	2026-04-18 18:35:45.20357+00	test-cold-f9ff5a7d-1	maintenance	INFO	[TEST] Routine check #56 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+79ea77dd-c789-4381-b939-cf266e9e5278	2026-04-18 18:35:45.203574+00	test-cold-f9ff5a7d-2	maintenance	INFO	[TEST] Routine check #57 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+1628cdcf-8562-4b1d-a268-335363a5ede1	2026-04-18 18:35:45.203584+00	test-cold-f9ff5a7d-3	maintenance	INFO	[TEST] Routine check #58 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+c00d1587-21e3-4335-9289-715e8f1f48d8	2026-04-18 18:35:45.203589+00	test-cold-f9ff5a7d-4	maintenance	INFO	[TEST] Routine check #59 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+baaba782-8d4e-4c6b-959a-bd1d4b04178f	2026-04-18 18:35:45.203593+00	test-cold-f9ff5a7d-0	maintenance	INFO	[TEST] Routine check #60 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+1617fb8d-30a3-4790-a00f-fdcd257113a4	2026-04-18 18:35:45.203597+00	test-cold-f9ff5a7d-1	maintenance	INFO	[TEST] Routine check #61 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+a0d08681-9b9b-41f6-9953-7464b58464ef	2026-04-18 18:35:45.203601+00	test-cold-f9ff5a7d-2	maintenance	INFO	[TEST] Routine check #62 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+80e96f0b-a9c5-4033-be1b-982d71c85478	2026-04-18 18:35:45.203605+00	test-cold-f9ff5a7d-3	maintenance	INFO	[TEST] Routine check #63 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+9b329fdd-ca52-4763-840a-91d79782360d	2026-04-18 18:35:45.203626+00	test-cold-f9ff5a7d-4	maintenance	INFO	[TEST] Routine check #64 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+ef50b7d4-db22-492b-9bf7-b64850bf2003	2026-04-18 18:35:45.203635+00	test-cold-f9ff5a7d-0	maintenance	INFO	[TEST] Routine check #65 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+94c1142d-cf47-4840-bbad-6d4eaef134a2	2026-04-18 18:35:45.203674+00	test-cold-f9ff5a7d-1	maintenance	INFO	[TEST] Routine check #66 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+cf92799c-fe76-4a64-bc86-a30c84101358	2026-04-18 18:35:45.203682+00	test-cold-f9ff5a7d-2	maintenance	INFO	[TEST] Routine check #67 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+c4539881-3e8e-42f4-9456-d0323b80533d	2026-04-18 18:35:45.203687+00	test-cold-f9ff5a7d-3	maintenance	INFO	[TEST] Routine check #68 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+754ef10d-9c58-4249-b5bd-898970ef4f12	2026-04-18 18:35:45.203707+00	test-cold-f9ff5a7d-4	maintenance	INFO	[TEST] Routine check #69 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+6dc99317-ffe0-40b8-8203-b08700b7a8a1	2026-04-18 18:35:45.203712+00	test-cold-f9ff5a7d-0	maintenance	INFO	[TEST] Routine check #70 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+e43fd56e-14c7-4bcd-ade2-279fe9558247	2026-04-18 18:35:45.203715+00	test-cold-f9ff5a7d-1	maintenance	INFO	[TEST] Routine check #71 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+cb5c0f70-cca8-41db-ad76-9c0d246d7d84	2026-04-18 18:35:45.203719+00	test-cold-f9ff5a7d-2	maintenance	INFO	[TEST] Routine check #72 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+e2055168-db00-46ce-aa98-8679ea5c102c	2026-04-18 18:35:45.203723+00	test-cold-f9ff5a7d-3	maintenance	INFO	[TEST] Routine check #73 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+b3a6666a-6239-41f3-966f-697f74c740d7	2026-04-18 18:35:45.203727+00	test-cold-f9ff5a7d-4	maintenance	INFO	[TEST] Routine check #74 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+ad7a4994-b76c-461d-ba27-3d7ea1159260	2026-04-18 18:35:45.203731+00	test-cold-f9ff5a7d-0	maintenance	INFO	[TEST] Routine check #75 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+99f10146-91f1-4a0a-84f7-e27c5c118464	2026-04-18 18:35:45.203734+00	test-cold-f9ff5a7d-1	maintenance	INFO	[TEST] Routine check #76 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+4e176967-b259-4027-9646-86ed7d2522c3	2026-04-18 18:35:45.203739+00	test-cold-f9ff5a7d-2	maintenance	INFO	[TEST] Routine check #77 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+43db9875-4a07-4f86-a78b-b025b9aa69b4	2026-04-18 18:35:45.203743+00	test-cold-f9ff5a7d-3	maintenance	INFO	[TEST] Routine check #78 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+5a7e83cd-2316-48dc-bdb4-5a040ef89387	2026-04-18 18:35:45.203747+00	test-cold-f9ff5a7d-4	maintenance	INFO	[TEST] Routine check #79 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+caebdbde-7faa-4e22-b767-ab07780c2a24	2026-04-18 18:35:45.203751+00	test-cold-f9ff5a7d-0	maintenance	INFO	[TEST] Routine check #80 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+f8b52ada-ef3f-41ce-8ef7-4ecbfc8ebd4c	2026-04-18 18:35:45.203755+00	test-cold-f9ff5a7d-1	maintenance	INFO	[TEST] Routine check #81 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+e6a452e8-af53-4b39-88d6-cb3b823903b1	2026-04-18 18:35:45.203758+00	test-cold-f9ff5a7d-2	maintenance	INFO	[TEST] Routine check #82 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+cef28622-d3fd-4ab3-8768-c8b7707be488	2026-04-18 18:35:45.203762+00	test-cold-f9ff5a7d-3	maintenance	INFO	[TEST] Routine check #83 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+0c8bfd68-e2d4-4ff1-8c9a-6cd5e945e2bd	2026-04-18 18:35:45.203766+00	test-cold-f9ff5a7d-4	maintenance	INFO	[TEST] Routine check #84 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+69b27fcb-ea2d-4b63-952f-791998cad533	2026-04-18 18:35:45.20377+00	test-cold-f9ff5a7d-0	maintenance	INFO	[TEST] Routine check #85 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+07f07945-3d6a-47a3-869d-0cb9a1a32983	2026-04-18 18:35:45.203773+00	test-cold-f9ff5a7d-1	maintenance	INFO	[TEST] Routine check #86 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+afedcfd4-63ea-4e7b-9972-631ad73dae27	2026-04-18 18:35:45.203777+00	test-cold-f9ff5a7d-2	maintenance	INFO	[TEST] Routine check #87 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+73cda39c-04aa-4c12-bdb0-c3c98fa93090	2026-04-18 18:35:45.203781+00	test-cold-f9ff5a7d-3	maintenance	INFO	[TEST] Routine check #88 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+944b30b9-a067-4260-a6e7-7f4ea72bdc90	2026-04-18 18:35:45.203785+00	test-cold-f9ff5a7d-4	maintenance	INFO	[TEST] Routine check #89 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+1e14dc69-2857-418e-b2d1-f9314cf09569	2026-04-18 18:35:45.203818+00	test-cold-f9ff5a7d-0	maintenance	INFO	[TEST] Routine check #90 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+77ff30e0-2400-4a92-8824-d9fa2d598774	2026-04-18 18:35:45.203821+00	test-cold-f9ff5a7d-1	maintenance	INFO	[TEST] Routine check #91 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+a309c2c4-0ada-4849-aaa0-a14eedca37d6	2026-04-18 18:35:45.203829+00	test-cold-f9ff5a7d-2	maintenance	INFO	[TEST] Routine check #92 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+880e98ed-7ec2-4a6a-aa39-08045c47663b	2026-04-18 18:35:45.203854+00	test-cold-f9ff5a7d-3	maintenance	INFO	[TEST] Routine check #93 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+3a4a933a-dbfe-48cb-852b-4b676e4c0ba6	2026-04-18 18:35:45.203858+00	test-cold-f9ff5a7d-4	maintenance	INFO	[TEST] Routine check #94 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+3688efab-850b-4278-b173-0419508e2321	2026-04-18 18:35:45.203862+00	test-cold-f9ff5a7d-0	maintenance	INFO	[TEST] Routine check #95 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+bf7a39aa-b8d7-4f6d-b282-90bcb4590ae1	2026-04-18 18:35:45.203867+00	test-cold-f9ff5a7d-1	maintenance	INFO	[TEST] Routine check #96 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+c1b4debd-fcc6-4a7d-9731-b0ad40f6ba4b	2026-04-18 18:35:45.203871+00	test-cold-f9ff5a7d-2	maintenance	INFO	[TEST] Routine check #97 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+4f90d04f-2e16-4018-a7f8-c7b6764cee60	2026-04-18 18:35:45.203875+00	test-cold-f9ff5a7d-3	maintenance	INFO	[TEST] Routine check #98 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+ff7c87b3-07d4-4a61-845f-4174a6f4c40e	2026-04-18 18:35:45.203881+00	test-cold-f9ff5a7d-4	maintenance	INFO	[TEST] Routine check #99 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:35:45.294777+00
+eee49d2f-3380-4650-885c-92e399c05411	2026-04-18 18:35:57.419776+00	test-dl-f9ff5a7d	unknown	ERROR	[TEST] Unrecognised log format (low_confidence)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:35:57.458509+00
+9f129f8c-7adc-4f01-92fb-4f8d30679db6	2026-04-18 18:35:57.419858+00	test-dl-f9ff5a7d	unknown	ERROR	[TEST] Unrecognised log format (low_confidence)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:35:57.466759+00
+f598edad-e2bb-4bb2-bf5b-18f50d3ca6ac	2026-04-18 18:35:57.419871+00	test-dl-f9ff5a7d	unknown	ERROR	[TEST] Unrecognised log format (low_confidence)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:35:57.467969+00
+8b87a6b0-ca7d-483e-bee1-fc486f9490b8	2026-04-18 18:36:05.531828+00	test-dl-f9ff5a7d	unknown	ERROR	[TEST] Unrecognised log format (spike_test_0)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:36:05.541816+00
+f615e67a-b9f7-4bba-b8be-e64f03204e26	2026-04-18 18:36:05.536551+00	test-dl-f9ff5a7d	unknown	ERROR	[TEST] Unrecognised log format (spike_test_1)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:36:05.547959+00
+46ea9718-2f5a-47f2-a0c1-a3ce96141392	2026-04-18 18:36:05.539574+00	test-dl-f9ff5a7d	unknown	ERROR	[TEST] Unrecognised log format (spike_test_2)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:36:05.550914+00
+34079071-d475-47b7-a56f-50528bde0005	2026-04-18 18:36:05.542137+00	test-dl-f9ff5a7d	unknown	ERROR	[TEST] Unrecognised log format (spike_test_3)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:36:05.553605+00
+ea9d567d-4eb7-40a7-a342-3816b37b785d	2026-04-18 18:36:05.543675+00	test-dl-f9ff5a7d	unknown	ERROR	[TEST] Unrecognised log format (spike_test_4)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:36:05.555208+00
+c814ddfe-8804-4bfc-9501-defdd999d65f	2026-04-18 18:36:05.544674+00	test-dl-f9ff5a7d	unknown	ERROR	[TEST] Unrecognised log format (spike_test_5)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:36:05.556831+00
+4febe754-cc2c-4c05-a110-b210df9b6c78	2026-04-18 18:36:05.54567+00	test-dl-f9ff5a7d	unknown	ERROR	[TEST] Unrecognised log format (spike_test_6)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:36:05.557993+00
+7125c2e9-e78a-4bde-9ba2-31a55317dc19	2026-04-18 18:36:05.546846+00	test-dl-f9ff5a7d	unknown	ERROR	[TEST] Unrecognised log format (spike_test_7)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:36:05.559007+00
+b0978bbb-325b-487e-aff8-820ba155a5ff	2026-04-18 18:36:05.548616+00	test-dl-f9ff5a7d	unknown	ERROR	[TEST] Unrecognised log format (spike_test_8)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:36:05.560739+00
+9ff4a6ce-9f9c-4964-b6c0-c97862d6330d	2026-04-18 18:36:05.55209+00	test-dl-f9ff5a7d	unknown	ERROR	[TEST] Unrecognised log format (spike_test_9)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:36:05.561731+00
+23c4dcb4-090e-4d32-9a50-0bcb0faf7c8d	2026-04-18 18:43:53.629667+00	test-p1-0af189a7	sensor_failure	ERROR	[TEST] Temperature sensor malfunction	electrical	Thermal sensor overcurrent	Shut down and replace sensor	0.88	f		2026-04-18 18:43:53.747534+00
+f7b83bf6-b9ff-43b3-9a05-a44e891ad6db	2026-04-18 18:44:11.814858+00	test-p1-0af189a7	sensor_failure	ERROR	[TEST] Temperature sensor malfunction	electrical	Thermal sensor overcurrent	Shut down and replace sensor	0.88	f		2026-04-18 18:44:11.826832+00
+e132e352-49b3-41d1-8e12-8937b5604c9c	2026-04-18 18:44:29.901074+00	test-cold-0af189a7-0	maintenance	INFO	[TEST] Routine check #0 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+26df55ed-5ae5-4d7a-b749-722964bcb72a	2026-04-18 18:44:29.90114+00	test-cold-0af189a7-1	maintenance	INFO	[TEST] Routine check #1 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+8f6d46f7-7aea-400d-a07f-9df5a8ccedc7	2026-04-18 18:44:29.901148+00	test-cold-0af189a7-2	maintenance	INFO	[TEST] Routine check #2 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+326e33bb-c40e-4edc-aa9a-89e9a32d15a5	2026-04-18 18:44:29.901154+00	test-cold-0af189a7-3	maintenance	INFO	[TEST] Routine check #3 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+f2d5cf60-ee59-4213-bc53-eb7d67b06135	2026-04-18 18:44:29.901158+00	test-cold-0af189a7-4	maintenance	INFO	[TEST] Routine check #4 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+277602fb-084f-4d01-aaf3-9527076ed346	2026-04-18 18:44:29.901164+00	test-cold-0af189a7-0	maintenance	INFO	[TEST] Routine check #5 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+2a48497e-d30c-49f9-8686-04c93978f80a	2026-04-18 18:44:29.901168+00	test-cold-0af189a7-1	maintenance	INFO	[TEST] Routine check #6 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+c1acb633-0c99-4247-b40f-6253f8966ffe	2026-04-18 18:44:29.901173+00	test-cold-0af189a7-2	maintenance	INFO	[TEST] Routine check #7 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+d85039a6-924d-49e7-bd86-0ca979c760bb	2026-04-18 18:44:29.901178+00	test-cold-0af189a7-3	maintenance	INFO	[TEST] Routine check #8 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+b6be2c62-b58d-45e8-9fbb-409be86da900	2026-04-18 18:44:29.901182+00	test-cold-0af189a7-4	maintenance	INFO	[TEST] Routine check #9 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+e999e5ae-a37a-4738-8181-e4cf07607eca	2026-04-18 18:44:29.901186+00	test-cold-0af189a7-0	maintenance	INFO	[TEST] Routine check #10 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+c7d7b0f9-40df-48e9-aa1f-91fbd6719d7b	2026-04-18 18:44:29.901206+00	test-cold-0af189a7-1	maintenance	INFO	[TEST] Routine check #11 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+797e90aa-4c27-42ac-9887-9d29aecbbb72	2026-04-18 18:44:29.901211+00	test-cold-0af189a7-2	maintenance	INFO	[TEST] Routine check #12 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+8798d2bb-a87b-45b4-9b72-3c41b1baa585	2026-04-18 18:44:29.901252+00	test-cold-0af189a7-3	maintenance	INFO	[TEST] Routine check #13 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+62d2be29-138d-415d-937a-e6de2c21dba8	2026-04-18 18:44:29.901259+00	test-cold-0af189a7-4	maintenance	INFO	[TEST] Routine check #14 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+1f1cd5eb-7cfd-41d6-be99-5c86dc786208	2026-04-18 18:44:29.901277+00	test-cold-0af189a7-0	maintenance	INFO	[TEST] Routine check #15 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+9cf4a8a9-d611-4572-b4c1-cf72105c90c3	2026-04-18 18:44:29.901291+00	test-cold-0af189a7-1	maintenance	INFO	[TEST] Routine check #16 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+46ebcbaa-acef-4222-a3ae-bd27ee454fb8	2026-04-18 18:44:29.901296+00	test-cold-0af189a7-2	maintenance	INFO	[TEST] Routine check #17 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+13e82de2-c715-40bd-8024-5bb69cde8afe	2026-04-18 18:44:29.9013+00	test-cold-0af189a7-3	maintenance	INFO	[TEST] Routine check #18 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+016f4128-2d23-4d96-b090-1b352e0220ae	2026-04-18 18:44:29.901305+00	test-cold-0af189a7-4	maintenance	INFO	[TEST] Routine check #19 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+9b1261e2-adab-432a-9004-00de57f9c440	2026-04-18 18:44:29.901309+00	test-cold-0af189a7-0	maintenance	INFO	[TEST] Routine check #20 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+8f523ef7-8a7b-42f3-9f4a-ae68e2ebe80f	2026-04-18 18:44:29.901314+00	test-cold-0af189a7-1	maintenance	INFO	[TEST] Routine check #21 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+52d3f68c-1e14-4611-805d-1fe7c9b11f24	2026-04-18 18:44:29.901318+00	test-cold-0af189a7-2	maintenance	INFO	[TEST] Routine check #22 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+c1151965-4ea8-4a19-b98f-3a1ad55eba04	2026-04-18 18:44:29.901322+00	test-cold-0af189a7-3	maintenance	INFO	[TEST] Routine check #23 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+5799324b-ac4a-4c8f-a8e7-be9c9b00fd95	2026-04-18 18:44:29.901326+00	test-cold-0af189a7-4	maintenance	INFO	[TEST] Routine check #24 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+21939b9c-aead-4a14-9778-de0deb19545b	2026-04-18 18:44:29.901336+00	test-cold-0af189a7-0	maintenance	INFO	[TEST] Routine check #25 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+cd1e09b3-66b1-4e53-9d3d-15ef9d4b8974	2026-04-18 18:44:29.90134+00	test-cold-0af189a7-1	maintenance	INFO	[TEST] Routine check #26 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+b19a0a67-4672-4a6f-9868-605b61456d08	2026-04-18 18:44:29.901345+00	test-cold-0af189a7-2	maintenance	INFO	[TEST] Routine check #27 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+9bfc97fc-fd62-4025-ab6e-0615dc7a87ac	2026-04-18 18:44:29.901349+00	test-cold-0af189a7-3	maintenance	INFO	[TEST] Routine check #28 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+eefdc571-4d40-48f9-95a4-3b756272f0c8	2026-04-18 18:44:29.901353+00	test-cold-0af189a7-4	maintenance	INFO	[TEST] Routine check #29 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+92c383fe-cb01-4a80-bf90-10074fc24613	2026-04-18 18:44:29.901357+00	test-cold-0af189a7-0	maintenance	INFO	[TEST] Routine check #30 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+dfb83932-2387-47e7-ae6f-aa0ad9bb7aab	2026-04-18 18:44:29.901362+00	test-cold-0af189a7-1	maintenance	INFO	[TEST] Routine check #31 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+9a72e3da-23e5-4ef1-995d-eaff354bbbf3	2026-04-18 18:44:29.901379+00	test-cold-0af189a7-2	maintenance	INFO	[TEST] Routine check #32 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+52088409-22fd-4267-9088-5fa683564d1e	2026-04-18 18:44:29.901403+00	test-cold-0af189a7-3	maintenance	INFO	[TEST] Routine check #33 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+4b9f906d-c622-46bd-85ad-4cbfdfda2ca6	2026-04-18 18:44:29.901407+00	test-cold-0af189a7-4	maintenance	INFO	[TEST] Routine check #34 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+70757ccf-cf44-4e96-bcad-477cf3ba2d56	2026-04-18 18:44:29.901411+00	test-cold-0af189a7-0	maintenance	INFO	[TEST] Routine check #35 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+8be801b4-a1c2-448e-8a19-2aeb0eb95398	2026-04-18 18:44:29.901416+00	test-cold-0af189a7-1	maintenance	INFO	[TEST] Routine check #36 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+396b1bb7-6f89-4ec1-9e61-99950d84b9ac	2026-04-18 18:44:29.90142+00	test-cold-0af189a7-2	maintenance	INFO	[TEST] Routine check #37 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+d1f5d6ab-bd78-40a9-87ae-5c0d1fbc399a	2026-04-18 18:44:29.901425+00	test-cold-0af189a7-3	maintenance	INFO	[TEST] Routine check #38 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+6f02218d-490d-4610-a601-3560d3e48b32	2026-04-18 18:44:29.901429+00	test-cold-0af189a7-4	maintenance	INFO	[TEST] Routine check #39 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+29ef7b2f-2a4f-4591-ae67-f72ce9d4b7c6	2026-04-18 18:44:29.901433+00	test-cold-0af189a7-0	maintenance	INFO	[TEST] Routine check #40 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+f81ff189-55ee-485a-a8d3-b3dabe9b44cf	2026-04-18 18:44:29.901438+00	test-cold-0af189a7-1	maintenance	INFO	[TEST] Routine check #41 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+c6f61d62-87ec-4c64-805e-dd4941c0263c	2026-04-18 18:44:29.901442+00	test-cold-0af189a7-2	maintenance	INFO	[TEST] Routine check #42 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+ab5c5677-6180-412a-ac39-5e4e3378be5e	2026-04-18 18:44:29.901446+00	test-cold-0af189a7-3	maintenance	INFO	[TEST] Routine check #43 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+257aa670-2cd5-4df9-a0ac-5160f49389a7	2026-04-18 18:44:29.901451+00	test-cold-0af189a7-4	maintenance	INFO	[TEST] Routine check #44 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+10d725c6-2502-4195-aab0-a37707139f6d	2026-04-18 18:44:29.901455+00	test-cold-0af189a7-0	maintenance	INFO	[TEST] Routine check #45 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+862b6778-a749-4db1-9066-72ad1a0d28b9	2026-04-18 18:44:29.90146+00	test-cold-0af189a7-1	maintenance	INFO	[TEST] Routine check #46 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+4d8a4cb7-adf4-458b-be81-080eeb793ee1	2026-04-18 18:44:29.901464+00	test-cold-0af189a7-2	maintenance	INFO	[TEST] Routine check #47 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+bb04ab8e-39b0-4412-9429-318361214f77	2026-04-18 18:44:29.901468+00	test-cold-0af189a7-3	maintenance	INFO	[TEST] Routine check #48 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+41b84f7b-45f3-4065-a6eb-1f5afc462191	2026-04-18 18:44:29.901472+00	test-cold-0af189a7-4	maintenance	INFO	[TEST] Routine check #49 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+947f115d-b598-41de-b461-0d12c3beeb2f	2026-04-18 18:44:29.901476+00	test-cold-0af189a7-0	maintenance	INFO	[TEST] Routine check #50 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+bf2d25dd-b440-4d47-bc92-06b00def1072	2026-04-18 18:44:29.901481+00	test-cold-0af189a7-1	maintenance	INFO	[TEST] Routine check #51 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+ad0d5080-f088-4458-86d6-bf352a632937	2026-04-18 18:44:29.901485+00	test-cold-0af189a7-2	maintenance	INFO	[TEST] Routine check #52 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+e9264e87-ea36-4577-80c2-0c0d839bfe39	2026-04-18 18:44:29.90149+00	test-cold-0af189a7-3	maintenance	INFO	[TEST] Routine check #53 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+50b5949a-2b36-4043-acc6-0d825ba596c5	2026-04-18 18:44:29.901494+00	test-cold-0af189a7-4	maintenance	INFO	[TEST] Routine check #54 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+ef9cd44c-7dca-4af0-9d37-5722c9e3badc	2026-04-18 18:44:29.901521+00	test-cold-0af189a7-0	maintenance	INFO	[TEST] Routine check #55 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+b41bfa22-efad-4976-a488-2ee97dfd846d	2026-04-18 18:44:29.901525+00	test-cold-0af189a7-1	maintenance	INFO	[TEST] Routine check #56 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+c538e5a8-d132-44e7-b6a5-ecb86f689bf7	2026-04-18 18:44:29.901529+00	test-cold-0af189a7-2	maintenance	INFO	[TEST] Routine check #57 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+44b23ed2-004f-4688-90bd-86be8ae48faa	2026-04-18 18:44:29.901534+00	test-cold-0af189a7-3	maintenance	INFO	[TEST] Routine check #58 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+f225206a-e63c-4bb7-ae27-d4dd94a8604e	2026-04-18 18:44:29.901538+00	test-cold-0af189a7-4	maintenance	INFO	[TEST] Routine check #59 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+8bdd2e71-c78a-4584-817b-c299f144b910	2026-04-18 18:44:29.901542+00	test-cold-0af189a7-0	maintenance	INFO	[TEST] Routine check #60 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+03b8b75a-41f6-44db-aa5c-a7bfd5edf96a	2026-04-18 18:44:29.901546+00	test-cold-0af189a7-1	maintenance	INFO	[TEST] Routine check #61 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+1b99d259-32b7-4d90-8797-2f47a9a089a5	2026-04-18 18:44:29.901551+00	test-cold-0af189a7-2	maintenance	INFO	[TEST] Routine check #62 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+f4a2cc67-abe2-4948-ae83-53b283273906	2026-04-18 18:44:29.901555+00	test-cold-0af189a7-3	maintenance	INFO	[TEST] Routine check #63 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+72cb7574-128d-40b6-8185-186e29c116c1	2026-04-18 18:44:29.901559+00	test-cold-0af189a7-4	maintenance	INFO	[TEST] Routine check #64 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+396e2ffe-fca7-44b6-b580-df2f9065b856	2026-04-18 18:44:29.901564+00	test-cold-0af189a7-0	maintenance	INFO	[TEST] Routine check #65 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+3886405d-6ee4-4622-a6c9-66a78b6d37ac	2026-04-18 18:44:29.901568+00	test-cold-0af189a7-1	maintenance	INFO	[TEST] Routine check #66 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+83c3728b-4849-476e-a14a-94adc1bf6a75	2026-04-18 18:44:29.901572+00	test-cold-0af189a7-2	maintenance	INFO	[TEST] Routine check #67 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+07bb538e-87f5-44e2-8058-62d2d482e8e8	2026-04-18 18:44:29.901588+00	test-cold-0af189a7-3	maintenance	INFO	[TEST] Routine check #68 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+cdf6f275-3f61-4a60-bf11-81e72727c12a	2026-04-18 18:44:29.901592+00	test-cold-0af189a7-4	maintenance	INFO	[TEST] Routine check #69 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+c05a8116-cd3b-4812-be1c-8895cb6d51ce	2026-04-18 18:44:29.901597+00	test-cold-0af189a7-0	maintenance	INFO	[TEST] Routine check #70 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+98de58a3-921b-48d3-9c1b-1cb1c4846fd7	2026-04-18 18:44:29.901601+00	test-cold-0af189a7-1	maintenance	INFO	[TEST] Routine check #71 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+47ba53ee-50cb-4f84-981d-d31bbd6e4bcc	2026-04-18 18:44:29.901605+00	test-cold-0af189a7-2	maintenance	INFO	[TEST] Routine check #72 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+72ba65d5-66a6-4fdd-9d24-acc20a414ad1	2026-04-18 18:44:29.901609+00	test-cold-0af189a7-3	maintenance	INFO	[TEST] Routine check #73 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+924522e3-f7de-4a57-9587-49ddd6f6d2e3	2026-04-18 18:44:29.901613+00	test-cold-0af189a7-4	maintenance	INFO	[TEST] Routine check #74 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+7af0ae99-b334-41c2-a120-c8f94bf7af12	2026-04-18 18:44:29.901617+00	test-cold-0af189a7-0	maintenance	INFO	[TEST] Routine check #75 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+3696185c-dfbf-4372-bf40-78ffdc80c483	2026-04-18 18:44:29.901625+00	test-cold-0af189a7-1	maintenance	INFO	[TEST] Routine check #76 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+ff5d9981-233a-4428-876f-c4e5c43ff49e	2026-04-18 18:44:29.90163+00	test-cold-0af189a7-2	maintenance	INFO	[TEST] Routine check #77 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+8f06372d-339c-47f5-9f34-547024614663	2026-04-18 18:44:29.901634+00	test-cold-0af189a7-3	maintenance	INFO	[TEST] Routine check #78 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+7b059db4-3fba-48e2-a4db-a259e2ce38be	2026-04-18 18:44:29.901638+00	test-cold-0af189a7-4	maintenance	INFO	[TEST] Routine check #79 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+243bf8e2-5f37-4618-9941-1528d89621ed	2026-04-18 18:44:29.901643+00	test-cold-0af189a7-0	maintenance	INFO	[TEST] Routine check #80 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+15429992-a1e3-4d39-9119-34518a7a170f	2026-04-18 18:44:29.901646+00	test-cold-0af189a7-1	maintenance	INFO	[TEST] Routine check #81 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+59691332-79d0-46ef-8750-d881efacd79a	2026-04-18 18:44:29.90165+00	test-cold-0af189a7-2	maintenance	INFO	[TEST] Routine check #82 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+775ade01-d78a-41cb-b0b0-095e2682edf5	2026-04-18 18:44:29.901654+00	test-cold-0af189a7-3	maintenance	INFO	[TEST] Routine check #83 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+122441d3-303f-4ec3-9f31-d392d38df15b	2026-04-18 18:44:29.901658+00	test-cold-0af189a7-4	maintenance	INFO	[TEST] Routine check #84 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+ab14b846-50da-4258-bb61-00abe2a05a58	2026-04-18 18:44:29.901662+00	test-cold-0af189a7-0	maintenance	INFO	[TEST] Routine check #85 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+e6ae691b-2d9b-4eb0-9c2a-8dd99699fdf6	2026-04-18 18:44:29.901666+00	test-cold-0af189a7-1	maintenance	INFO	[TEST] Routine check #86 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+d883e640-c735-47d7-a171-bab399217e6b	2026-04-18 18:44:29.90167+00	test-cold-0af189a7-2	maintenance	INFO	[TEST] Routine check #87 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+33c542c4-c523-46e3-af55-0ca9ec1336eb	2026-04-18 18:44:29.901674+00	test-cold-0af189a7-3	maintenance	INFO	[TEST] Routine check #88 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+972ac5eb-933c-4a63-b6cd-dd380fabd32b	2026-04-18 18:44:29.901678+00	test-cold-0af189a7-4	maintenance	INFO	[TEST] Routine check #89 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+6b2d3d51-5e56-42e1-9840-420e428b9025	2026-04-18 18:44:29.901682+00	test-cold-0af189a7-0	maintenance	INFO	[TEST] Routine check #90 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+8ee0f1a8-6293-4c19-b2b8-5907b080bbcd	2026-04-18 18:44:29.901687+00	test-cold-0af189a7-1	maintenance	INFO	[TEST] Routine check #91 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+de094739-7297-43e8-ae49-30446a9d82c7	2026-04-18 18:44:29.901691+00	test-cold-0af189a7-2	maintenance	INFO	[TEST] Routine check #92 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+c8dbe678-9e4d-4e7c-831c-73b29ff72f27	2026-04-18 18:44:29.901696+00	test-cold-0af189a7-3	maintenance	INFO	[TEST] Routine check #93 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+a05f4980-5c0c-4ba2-ba32-86f07a0f5093	2026-04-18 18:44:29.9017+00	test-cold-0af189a7-4	maintenance	INFO	[TEST] Routine check #94 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+ccf2768c-7305-4fdb-b63d-af3be6bff9bc	2026-04-18 18:44:29.901705+00	test-cold-0af189a7-0	maintenance	INFO	[TEST] Routine check #95 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+280bcd77-f0b4-42b6-b670-63645a14bf6d	2026-04-18 18:44:29.90171+00	test-cold-0af189a7-1	maintenance	INFO	[TEST] Routine check #96 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+d2ec1bd0-7d67-4f14-b387-1c3b73cabe23	2026-04-18 18:44:29.901714+00	test-cold-0af189a7-2	maintenance	INFO	[TEST] Routine check #97 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+53bbf5a8-2666-44fa-9832-f9e622c9dfd2	2026-04-18 18:44:29.901718+00	test-cold-0af189a7-3	maintenance	INFO	[TEST] Routine check #98 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+1ef83f9b-710a-4552-885f-be54d59d07d7	2026-04-18 18:44:29.901722+00	test-cold-0af189a7-4	maintenance	INFO	[TEST] Routine check #99 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:44:30.01893+00
+106311b1-eb3b-47c8-898d-7a07d0c9389f	2026-04-18 18:44:42.113321+00	test-dl-0af189a7	unknown	ERROR	[TEST] Unrecognised log format (low_confidence)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:44:42.146745+00
+2c896685-d410-474a-b01c-f228f7bd2903	2026-04-18 18:44:42.113341+00	test-dl-0af189a7	unknown	ERROR	[TEST] Unrecognised log format (low_confidence)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:44:42.153589+00
+7ba7a64b-9abd-4120-a370-2bb9151f6d3c	2026-04-18 18:44:42.113349+00	test-dl-0af189a7	unknown	ERROR	[TEST] Unrecognised log format (low_confidence)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:44:42.154804+00
+070f9073-c6e5-47fd-bee7-2272c3f93ce7	2026-04-18 18:44:50.233285+00	test-dl-0af189a7	unknown	ERROR	[TEST] Unrecognised log format (spike_test_0)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:44:50.235595+00
+a3883435-3a20-4dd5-a8ef-317377c71e3a	2026-04-18 18:44:50.235707+00	test-dl-0af189a7	unknown	ERROR	[TEST] Unrecognised log format (spike_test_1)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:44:50.241531+00
+7cd48966-0afe-4f55-be5e-18a267591176	2026-04-18 18:44:50.23938+00	test-dl-0af189a7	unknown	ERROR	[TEST] Unrecognised log format (spike_test_2)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:44:50.244122+00
+14bf5df4-cb2e-4953-8e9c-285460c5e6f9	2026-04-18 18:44:50.240488+00	test-dl-0af189a7	unknown	ERROR	[TEST] Unrecognised log format (spike_test_3)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:44:50.246894+00
+8f5db82f-fee5-4d97-abc9-8814695f5692	2026-04-18 18:44:50.242337+00	test-dl-0af189a7	unknown	ERROR	[TEST] Unrecognised log format (spike_test_4)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:44:50.248115+00
+303e6d18-9ecc-4012-b2ac-278fdac1f411	2026-04-18 18:44:50.243512+00	test-dl-0af189a7	unknown	ERROR	[TEST] Unrecognised log format (spike_test_5)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:44:50.249182+00
+e7bad77f-595a-4210-864f-c484359064d1	2026-04-18 18:44:50.244819+00	test-dl-0af189a7	unknown	ERROR	[TEST] Unrecognised log format (spike_test_6)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:44:50.250008+00
+e910db90-a050-4af8-bcce-aec7d338ce23	2026-04-18 18:44:50.246328+00	test-dl-0af189a7	unknown	ERROR	[TEST] Unrecognised log format (spike_test_7)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:44:50.250887+00
+8d094a16-7187-4ef2-825b-ce4075567c83	2026-04-18 18:44:50.247206+00	test-dl-0af189a7	unknown	ERROR	[TEST] Unrecognised log format (spike_test_8)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:44:50.252244+00
+2965dd92-07be-4b46-b3c1-d4c30bc8cc43	2026-04-18 18:44:50.248262+00	test-dl-0af189a7	unknown	ERROR	[TEST] Unrecognised log format (spike_test_9)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:44:50.253333+00
+889f57f1-1320-4ddc-ae96-f3c8b874df0a	2026-04-18 18:52:26.403453+00	test-p1-489e354d	sensor_failure	ERROR	[TEST] Temperature sensor malfunction	electrical	Thermal sensor overcurrent	Shut down and replace sensor	0.88	f		2026-04-18 18:52:26.513974+00
+335b813a-8527-41e9-9ca9-ab2de9615ec3	2026-04-18 18:52:26.402581+00	test-p0-489e354d	alarm	CRITICAL	[TEST] Fire alarm activated in zone 3	fire	Fire detected near conveyor belt	Evacuate zone 3 immediately	0.99	f		2026-04-18 18:52:26.523104+00
+fbb9a692-6751-4d15-9944-cbfbd75a68ba	2026-04-18 18:52:31.5922+00	test-p0-489e354d	alarm	CRITICAL	[TEST] Fire alarm activated in zone 3	fire	Fire detected near conveyor belt	Evacuate zone 3 immediately	0.99	f		2026-04-18 18:52:31.608064+00
+759b9452-cff2-4a7c-b9af-51775fd0100f	2026-04-18 18:52:31.605054+00	test-p1-489e354d	sensor_failure	ERROR	[TEST] Temperature sensor malfunction	electrical	Thermal sensor overcurrent	Shut down and replace sensor	0.88	f		2026-04-18 18:52:31.614352+00
+6b11c5cd-71dd-4a58-aab2-b00e9cda1d3e	2026-04-18 18:52:31.637847+00	test-cold-489e354d-0	maintenance	INFO	[TEST] Routine check #0 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+326b398e-fff1-4d03-86b4-ca26a60aad33	2026-04-18 18:52:31.637866+00	test-cold-489e354d-1	maintenance	INFO	[TEST] Routine check #1 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+cceb82ca-799b-4923-bb33-b8370b353332	2026-04-18 18:52:31.637882+00	test-cold-489e354d-4	maintenance	INFO	[TEST] Routine check #4 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+216c95fb-47ee-476b-9900-c71dda8b2066	2026-04-18 18:52:31.637873+00	test-cold-489e354d-2	maintenance	INFO	[TEST] Routine check #2 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+74d9f8d6-b4c6-4885-94bd-e32500d6cf38	2026-04-18 18:52:31.637878+00	test-cold-489e354d-3	maintenance	INFO	[TEST] Routine check #3 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+684b3107-726d-48d9-bca0-3d9171ae02a9	2026-04-18 18:52:31.637886+00	test-cold-489e354d-0	maintenance	INFO	[TEST] Routine check #5 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+7436b08e-8307-4c72-9ee0-13d564510e0d	2026-04-18 18:52:31.63789+00	test-cold-489e354d-1	maintenance	INFO	[TEST] Routine check #6 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+c310b51d-3273-4183-88e6-395cc68b13e2	2026-04-18 18:52:31.637894+00	test-cold-489e354d-2	maintenance	INFO	[TEST] Routine check #7 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+d7155402-74c2-45cc-a585-cf195ec134f2	2026-04-18 18:52:31.637898+00	test-cold-489e354d-3	maintenance	INFO	[TEST] Routine check #8 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+916f78eb-2aaf-493f-bb3f-a000e806b328	2026-04-18 18:52:31.637902+00	test-cold-489e354d-4	maintenance	INFO	[TEST] Routine check #9 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+062e5036-e93b-4e7e-8ecb-ec641cbd1fea	2026-04-18 18:52:31.637907+00	test-cold-489e354d-0	maintenance	INFO	[TEST] Routine check #10 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+370e3779-1430-4b0b-9734-25f4a5bdc5ed	2026-04-18 18:52:31.637912+00	test-cold-489e354d-1	maintenance	INFO	[TEST] Routine check #11 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+ccecb49d-006f-4e9f-adce-f57301354f24	2026-04-18 18:52:31.637916+00	test-cold-489e354d-2	maintenance	INFO	[TEST] Routine check #12 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+bd893e32-745a-40a2-9c97-fd1bb1274a26	2026-04-18 18:52:31.637919+00	test-cold-489e354d-3	maintenance	INFO	[TEST] Routine check #13 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+28379cce-3835-465c-8557-9600de53b09b	2026-04-18 18:52:31.637923+00	test-cold-489e354d-4	maintenance	INFO	[TEST] Routine check #14 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+2edc2a38-ce61-47c8-b530-474341bd3157	2026-04-18 18:52:31.637927+00	test-cold-489e354d-0	maintenance	INFO	[TEST] Routine check #15 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+ecee9b76-5a32-424f-8560-08b8f9641b2f	2026-04-18 18:52:31.637934+00	test-cold-489e354d-2	maintenance	INFO	[TEST] Routine check #17 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+19041041-add2-49fc-a194-6ac7ab053436	2026-04-18 18:52:31.637931+00	test-cold-489e354d-1	maintenance	INFO	[TEST] Routine check #16 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+a19843c7-069a-47b8-93ee-51de123a0346	2026-04-18 18:52:31.637939+00	test-cold-489e354d-3	maintenance	INFO	[TEST] Routine check #18 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+d63a31ed-4422-4131-b841-567d0ff4b5b0	2026-04-18 18:52:31.637943+00	test-cold-489e354d-4	maintenance	INFO	[TEST] Routine check #19 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+2e265e46-ace9-403e-a09c-abc88cdf2940	2026-04-18 18:52:31.637946+00	test-cold-489e354d-0	maintenance	INFO	[TEST] Routine check #20 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+c0c28702-69c5-4e7d-9704-b33b0c71deca	2026-04-18 18:52:31.63795+00	test-cold-489e354d-1	maintenance	INFO	[TEST] Routine check #21 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+d596e034-2892-4e75-97c5-c48f3a0b1325	2026-04-18 18:52:31.637954+00	test-cold-489e354d-2	maintenance	INFO	[TEST] Routine check #22 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+11c7c3b1-ee21-44a5-bb23-5e717b4e9f7b	2026-04-18 18:52:31.637959+00	test-cold-489e354d-3	maintenance	INFO	[TEST] Routine check #23 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+01947697-33ce-4032-a765-e293aab307db	2026-04-18 18:52:31.637963+00	test-cold-489e354d-4	maintenance	INFO	[TEST] Routine check #24 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+7aadeabe-0267-472a-a82c-d2f655b4b4cb	2026-04-18 18:52:31.637967+00	test-cold-489e354d-0	maintenance	INFO	[TEST] Routine check #25 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+32bcb629-a937-4e81-a737-2aba6d8415aa	2026-04-18 18:52:31.637971+00	test-cold-489e354d-1	maintenance	INFO	[TEST] Routine check #26 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+4e0ee534-d5e3-491c-9553-569bd7a1580f	2026-04-18 18:52:31.637975+00	test-cold-489e354d-2	maintenance	INFO	[TEST] Routine check #27 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+b4f0448b-7edc-4134-9f8b-59eb60e47aca	2026-04-18 18:52:31.637979+00	test-cold-489e354d-3	maintenance	INFO	[TEST] Routine check #28 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+db1d6b2a-4134-4f64-aa3a-01b9ce3efab3	2026-04-18 18:52:31.637983+00	test-cold-489e354d-4	maintenance	INFO	[TEST] Routine check #29 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+13bd8bb3-4456-4842-a828-0ec5aed6601c	2026-04-18 18:52:31.637987+00	test-cold-489e354d-0	maintenance	INFO	[TEST] Routine check #30 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+97dd4f05-4b58-4dfd-ba8b-0793ee1f1008	2026-04-18 18:52:31.63799+00	test-cold-489e354d-1	maintenance	INFO	[TEST] Routine check #31 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+5ec634a4-19a4-4b5e-a79d-66c946884c86	2026-04-18 18:52:31.637994+00	test-cold-489e354d-2	maintenance	INFO	[TEST] Routine check #32 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+cca4185f-d6e9-4705-89bb-65e64c66f756	2026-04-18 18:52:31.637998+00	test-cold-489e354d-3	maintenance	INFO	[TEST] Routine check #33 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+0c77eb6c-f723-410f-804a-5058024ca324	2026-04-18 18:52:31.638002+00	test-cold-489e354d-4	maintenance	INFO	[TEST] Routine check #34 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+7d000f0e-9f52-40ea-b4c7-d2058b2a164f	2026-04-18 18:52:31.638006+00	test-cold-489e354d-0	maintenance	INFO	[TEST] Routine check #35 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+8ca9bbdb-b3c1-4e02-be12-4d36c557c190	2026-04-18 18:52:31.63801+00	test-cold-489e354d-1	maintenance	INFO	[TEST] Routine check #36 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+99e8fce2-d20b-4abe-880d-f5a38a588815	2026-04-18 18:52:31.638014+00	test-cold-489e354d-2	maintenance	INFO	[TEST] Routine check #37 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+8a5cda25-60f7-4376-a8ff-5eeb807d128a	2026-04-18 18:52:31.638018+00	test-cold-489e354d-3	maintenance	INFO	[TEST] Routine check #38 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+3664f2ec-e4b6-4c19-989b-34377b1575b2	2026-04-18 18:52:31.638022+00	test-cold-489e354d-4	maintenance	INFO	[TEST] Routine check #39 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+20b03f89-beb4-42e4-9f4d-74ab727cad26	2026-04-18 18:52:31.638025+00	test-cold-489e354d-0	maintenance	INFO	[TEST] Routine check #40 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+91b1ea09-fa51-4447-8f3f-540cf4e685f6	2026-04-18 18:52:31.638029+00	test-cold-489e354d-1	maintenance	INFO	[TEST] Routine check #41 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+56b17e73-d0b6-4cef-9bad-449f41979972	2026-04-18 18:52:31.638033+00	test-cold-489e354d-2	maintenance	INFO	[TEST] Routine check #42 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+786aff09-32bb-46a1-8341-a682c7ab0c09	2026-04-18 18:52:31.638037+00	test-cold-489e354d-3	maintenance	INFO	[TEST] Routine check #43 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+33d42db6-5604-473b-b303-486632de37ec	2026-04-18 18:52:31.638041+00	test-cold-489e354d-4	maintenance	INFO	[TEST] Routine check #44 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+2c35fc98-ccd7-4d0c-957e-46ce47858db4	2026-04-18 18:52:31.638044+00	test-cold-489e354d-0	maintenance	INFO	[TEST] Routine check #45 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+9e65222f-83c2-43b6-885f-ea15c8973616	2026-04-18 18:52:31.638048+00	test-cold-489e354d-1	maintenance	INFO	[TEST] Routine check #46 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+89b2f6d9-b606-4526-b4f7-b3fae20d1ae2	2026-04-18 18:52:31.638052+00	test-cold-489e354d-2	maintenance	INFO	[TEST] Routine check #47 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+606224de-9822-4796-acd2-c687064780f2	2026-04-18 18:52:31.638056+00	test-cold-489e354d-3	maintenance	INFO	[TEST] Routine check #48 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+e2071f32-a4eb-4f34-81ae-949aca560fe8	2026-04-18 18:52:31.63806+00	test-cold-489e354d-4	maintenance	INFO	[TEST] Routine check #49 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+2bcdb84a-b2ca-451f-a9a2-79e69b0f0f24	2026-04-18 18:52:31.638064+00	test-cold-489e354d-0	maintenance	INFO	[TEST] Routine check #50 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+4e80a43c-6db2-4248-90e5-0f98b74cc4f6	2026-04-18 18:52:31.638068+00	test-cold-489e354d-1	maintenance	INFO	[TEST] Routine check #51 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+28dfb6e9-5a8e-4f17-ab32-7ecc62b80a49	2026-04-18 18:52:31.638071+00	test-cold-489e354d-2	maintenance	INFO	[TEST] Routine check #52 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+d2a95bcf-7914-4f3d-89e1-df9c79af76b9	2026-04-18 18:52:31.638075+00	test-cold-489e354d-3	maintenance	INFO	[TEST] Routine check #53 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+30acc747-d206-470b-b3a2-3decb410e725	2026-04-18 18:52:31.638089+00	test-cold-489e354d-4	maintenance	INFO	[TEST] Routine check #54 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+e9d7fee0-2805-4d97-b4a0-f10375d71de6	2026-04-18 18:52:31.638103+00	test-cold-489e354d-0	maintenance	INFO	[TEST] Routine check #55 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+68aa8ec9-95c6-4d1e-90a6-22c9364ad876	2026-04-18 18:52:31.638109+00	test-cold-489e354d-1	maintenance	INFO	[TEST] Routine check #56 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+b4ac24be-0992-4842-9d84-cc437f12ed40	2026-04-18 18:52:31.638114+00	test-cold-489e354d-2	maintenance	INFO	[TEST] Routine check #57 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+7eaf6d13-11b9-4bf3-a83f-3b2244b7237c	2026-04-18 18:52:31.638118+00	test-cold-489e354d-3	maintenance	INFO	[TEST] Routine check #58 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+e3db84c3-579a-4723-94f6-49891d80b877	2026-04-18 18:52:31.638122+00	test-cold-489e354d-4	maintenance	INFO	[TEST] Routine check #59 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+551b378d-ea91-4e49-aecd-3b8e37703fcf	2026-04-18 18:52:31.638126+00	test-cold-489e354d-0	maintenance	INFO	[TEST] Routine check #60 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+e91ec829-6073-474e-a788-64cddf1065d8	2026-04-18 18:52:31.63813+00	test-cold-489e354d-1	maintenance	INFO	[TEST] Routine check #61 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+ac6c8310-f979-4ec7-a338-5fdbf663a3c4	2026-04-18 18:52:31.638134+00	test-cold-489e354d-2	maintenance	INFO	[TEST] Routine check #62 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+34b12be3-5e04-4fcb-be37-561156cde911	2026-04-18 18:52:31.638137+00	test-cold-489e354d-3	maintenance	INFO	[TEST] Routine check #63 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+c87ac203-57ba-4491-bea0-0075f0764e58	2026-04-18 18:52:31.638141+00	test-cold-489e354d-4	maintenance	INFO	[TEST] Routine check #64 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+7ccb0ea5-6f15-44ea-994b-1b2ceddaf968	2026-04-18 18:52:31.638146+00	test-cold-489e354d-0	maintenance	INFO	[TEST] Routine check #65 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+1a43eca9-ecc8-4b0d-a1a1-624e659b7915	2026-04-18 18:52:31.63815+00	test-cold-489e354d-1	maintenance	INFO	[TEST] Routine check #66 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+59acb01b-8ee2-4b44-987f-8c678db29d61	2026-04-18 18:52:31.638154+00	test-cold-489e354d-2	maintenance	INFO	[TEST] Routine check #67 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+c2325139-b248-4683-9f73-4e028dafdfa7	2026-04-18 18:52:31.638157+00	test-cold-489e354d-3	maintenance	INFO	[TEST] Routine check #68 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+0aa72c04-bfb7-4fe4-8ba5-1671f2833df8	2026-04-18 18:52:31.638162+00	test-cold-489e354d-4	maintenance	INFO	[TEST] Routine check #69 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+e842f6e1-a81a-4250-8b42-5d7c14cdde5b	2026-04-18 18:52:31.638166+00	test-cold-489e354d-0	maintenance	INFO	[TEST] Routine check #70 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+ff3cff18-4ac1-44f3-92af-8df69f84ea35	2026-04-18 18:52:31.63817+00	test-cold-489e354d-1	maintenance	INFO	[TEST] Routine check #71 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+8ddb6a8a-b6d1-49eb-a404-e1b74ca67b34	2026-04-18 18:52:31.638173+00	test-cold-489e354d-2	maintenance	INFO	[TEST] Routine check #72 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+f3ebbd7c-2dd7-4084-ac9f-6affba5d4a3d	2026-04-18 18:52:31.638225+00	test-cold-489e354d-3	maintenance	INFO	[TEST] Routine check #73 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+591cb3cd-0016-4b79-8d50-fda037fb4476	2026-04-18 18:52:31.63823+00	test-cold-489e354d-4	maintenance	INFO	[TEST] Routine check #74 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+dbc58665-1e18-43b2-8e87-91dc3a903fa4	2026-04-18 18:52:31.638234+00	test-cold-489e354d-0	maintenance	INFO	[TEST] Routine check #75 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+5a702522-4222-4359-afca-c1921f5ee2aa	2026-04-18 18:52:31.638238+00	test-cold-489e354d-1	maintenance	INFO	[TEST] Routine check #76 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+ca864b75-ac40-4344-98e7-dda65d70ec88	2026-04-18 18:52:31.63868+00	test-cold-489e354d-2	maintenance	INFO	[TEST] Routine check #77 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+46d0a1c0-ce80-4b17-812a-6c03a107aceb	2026-04-18 18:52:31.638692+00	test-cold-489e354d-3	maintenance	INFO	[TEST] Routine check #78 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+26e3db9a-c9a7-4776-8114-bf5b459491c6	2026-04-18 18:52:31.638719+00	test-cold-489e354d-4	maintenance	INFO	[TEST] Routine check #79 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+b7bfc87e-d15f-45f4-b983-6c1a78afe124	2026-04-18 18:52:31.638725+00	test-cold-489e354d-0	maintenance	INFO	[TEST] Routine check #80 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+aebf19e5-5ab7-4c53-9dc8-4745acd40304	2026-04-18 18:52:31.638729+00	test-cold-489e354d-1	maintenance	INFO	[TEST] Routine check #81 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+1d66e152-3f21-46db-934e-da7ded0eeb54	2026-04-18 18:52:31.638733+00	test-cold-489e354d-2	maintenance	INFO	[TEST] Routine check #82 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+47481063-f48a-4efd-9349-88cf63733d1b	2026-04-18 18:52:31.638736+00	test-cold-489e354d-3	maintenance	INFO	[TEST] Routine check #83 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+34344316-4c50-418f-9c13-bf8902c86599	2026-04-18 18:52:31.63874+00	test-cold-489e354d-4	maintenance	INFO	[TEST] Routine check #84 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+4d54e143-6b5e-4d2e-ac59-53130fafcbee	2026-04-18 18:52:31.638744+00	test-cold-489e354d-0	maintenance	INFO	[TEST] Routine check #85 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+1392856c-c05e-4a31-8f24-39b1d903e197	2026-04-18 18:52:31.638748+00	test-cold-489e354d-1	maintenance	INFO	[TEST] Routine check #86 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+9b304014-f590-4513-a3c9-f7eff7878427	2026-04-18 18:52:31.638752+00	test-cold-489e354d-2	maintenance	INFO	[TEST] Routine check #87 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+9e84df80-84a4-4f68-86fd-2d568146f0f9	2026-04-18 18:52:31.638755+00	test-cold-489e354d-3	maintenance	INFO	[TEST] Routine check #88 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+338a19d0-ec48-4fed-9b7a-616c9b6a02bd	2026-04-18 18:52:31.63876+00	test-cold-489e354d-4	maintenance	INFO	[TEST] Routine check #89 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+b64c9239-127b-4fe1-96ad-4883a4b376bc	2026-04-18 18:52:31.638764+00	test-cold-489e354d-0	maintenance	INFO	[TEST] Routine check #90 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+0b962931-5a64-4613-968b-8762d86190be	2026-04-18 18:52:31.638769+00	test-cold-489e354d-1	maintenance	INFO	[TEST] Routine check #91 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+d0168e0a-8353-4f2f-8535-1c2f57a64fe9	2026-04-18 18:52:31.638776+00	test-cold-489e354d-2	maintenance	INFO	[TEST] Routine check #92 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+d547dce9-58ed-46bc-8d81-ac3cecd32ef8	2026-04-18 18:52:31.638786+00	test-cold-489e354d-3	maintenance	INFO	[TEST] Routine check #93 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+2df7d80c-e984-4098-a8ec-b178a88b3b15	2026-04-18 18:52:31.63879+00	test-cold-489e354d-4	maintenance	INFO	[TEST] Routine check #94 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+6b3b045b-e9be-41e8-9a6b-b98f8d06924b	2026-04-18 18:52:31.638798+00	test-cold-489e354d-0	maintenance	INFO	[TEST] Routine check #95 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+90b02082-a044-4b32-8abc-4ae59f431439	2026-04-18 18:52:31.638802+00	test-cold-489e354d-1	maintenance	INFO	[TEST] Routine check #96 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+ed2874f4-eeed-4b31-9894-00753838c50d	2026-04-18 18:52:31.638806+00	test-cold-489e354d-2	maintenance	INFO	[TEST] Routine check #97 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+023e90c9-2dd5-4ca3-9cdf-64985d0c7a24	2026-04-18 18:52:31.63881+00	test-cold-489e354d-3	maintenance	INFO	[TEST] Routine check #98 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+969f88a0-176e-44a9-8013-01890dd3e3cc	2026-04-18 18:52:31.638814+00	test-cold-489e354d-4	maintenance	INFO	[TEST] Routine check #99 passed	maintenance	Scheduled check	Log and continue	0.92	f	\N	2026-04-18 18:52:31.753177+00
+032ee663-a0f6-4b80-8ef1-843e015c8d5c	2026-04-18 18:52:43.887596+00	test-dl-489e354d	unknown	ERROR	[TEST] Unrecognised log format (low_confidence)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:52:43.910418+00
+b17cbe50-0bf4-4fa6-87a3-0f0840858dc8	2026-04-18 18:52:43.887622+00	test-dl-489e354d	unknown	ERROR	[TEST] Unrecognised log format (low_confidence)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:52:43.919283+00
+4cb2768f-ca5d-47d3-a2a0-916651029ced	2026-04-18 18:52:43.887631+00	test-dl-489e354d	unknown	ERROR	[TEST] Unrecognised log format (low_confidence)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:52:43.920577+00
+a5c23b05-6b72-4943-8e7d-d34006d3b079	2026-04-18 18:52:51.994899+00	test-dl-489e354d	unknown	ERROR	[TEST] Unrecognised log format (spike_test_0)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:52:51.997606+00
+e893e4a8-69e5-4f7d-94d7-0d54f1d1e1c2	2026-04-18 18:52:51.997991+00	test-dl-489e354d	unknown	ERROR	[TEST] Unrecognised log format (spike_test_1)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:52:52.001379+00
+413dc93f-c9f9-41bc-8ed5-c924d61c559d	2026-04-18 18:52:51.998912+00	test-dl-489e354d	unknown	ERROR	[TEST] Unrecognised log format (spike_test_2)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:52:52.003099+00
+8245a13f-974a-4180-a4e9-07dfb81a1dc4	2026-04-18 18:52:51.999875+00	test-dl-489e354d	unknown	ERROR	[TEST] Unrecognised log format (spike_test_3)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:52:52.00442+00
+5ebf5f1c-3f86-44b7-a569-7c1c3a6d72e7	2026-04-18 18:52:52.000828+00	test-dl-489e354d	unknown	ERROR	[TEST] Unrecognised log format (spike_test_4)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:52:52.006324+00
+eacbfead-c366-4e60-9c28-656595411946	2026-04-18 18:52:52.001567+00	test-dl-489e354d	unknown	ERROR	[TEST] Unrecognised log format (spike_test_5)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:52:52.008318+00
+6bfafb23-e1be-4604-9e5d-f3d45761aef3	2026-04-18 18:52:52.00259+00	test-dl-489e354d	unknown	ERROR	[TEST] Unrecognised log format (spike_test_6)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:52:52.009141+00
+35c2a38f-0113-44c1-a7bf-b0b1e11eb0b6	2026-04-18 18:52:52.004111+00	test-dl-489e354d	unknown	ERROR	[TEST] Unrecognised log format (spike_test_7)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:52:52.010053+00
+acaea2cf-248c-410e-aa5c-21d28afd1c7c	2026-04-18 18:52:52.005204+00	test-dl-489e354d	unknown	ERROR	[TEST] Unrecognised log format (spike_test_8)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:52:52.011143+00
+cac981bf-55e2-42e7-8215-180f4909e2c1	2026-04-18 18:52:52.005931+00	test-dl-489e354d	unknown	ERROR	[TEST] Unrecognised log format (spike_test_9)	unknown			0.12	t	AI confidence too low (12%) — model could not reliably classify this event	2026-04-18 18:52:52.012546+00
+c75cda78-0b04-400e-b1cd-2e47d99f1e9c	2026-04-20 05:27:57.658485+00	tool_PECVD-01	fire_alarm	error	Smoke detected in chamber exhaust duct — auto-shutoff triggered	thermal	Smoke in exhaust duct indicates possible overheating or combustion in the chamber	Inspect exhaust duct for leaks, blockages, or overheating components	0.92	f		2026-04-20 05:27:57.730653+00
+e70dfd19-16be-4b10-8e30-8987e129e2e1	2026-04-20 05:38:07.967514+00	tool_PECVD-01	temperature_reading	info	Chamber wall temperature within spec	thermal	Temperature control system operating within normal parameters	No action required; continue routine monitoring	0.95	f		2026-04-20 05:38:07.99323+00
+0829e9a9-dd4d-44d7-bb7e-7ebdf2b3e88e	2026-04-20 05:40:54.908369+00	machine_MES	unknown	info	2026-04-20T00:01:14Z INFO machine_MES-SERVER-01 Shift handover complete. Day shift started. 25 active lots in fab.	unknown	Shift handover process completed normally	No action required	0.8	t		2026-04-20 05:40:54.909307+00
+b84f4be4-650c-4f3f-b04c-bce114ed7ed4	2026-04-20 05:41:49.465364+00	tool_CVD-CHAMBER-B	film_thickness_oos	error	TEOS oxide deposition thickness measured at 312 nm vs 400 nm target. Run aborted after step 2.	thermal	Insufficient temperature or gas flow during deposition	Adjust temperature and gas flow parameters to meet target thickness	0.92	f		2026-04-20 05:41:49.466643+00
+\.
+
+
+--
+-- Data for Name: _hyper_6_2_chunk; Type: TABLE DATA; Schema: _timescaledb_internal; Owner: logparser
+--
+
+COPY _timescaledb_internal._hyper_6_2_chunk (job_id, "timestamp", source, event_type, severity, message, ai_category, ai_root_cause, ai_recommended_action, confidence_score, requires_review, review_reason, created_at) FROM stdin;
+e4c578fb-8756-498a-a27b-fef777ab2d12	2026-04-23 00:58:44.503132+00	unknown	unknown	INFO		unknown			0	f	\N	2026-04-23 00:58:44.565129+00
+\.
+
+
+--
+-- Data for Name: _materialized_hypertable_2; Type: TABLE DATA; Schema: _timescaledb_internal; Owner: logparser
+--
+
+COPY _timescaledb_internal._materialized_hypertable_2 (bucket, tool_id, severity, event_count, avg_norm_conf, avg_temp_k, avg_pressure_pa, avg_rf_power_w) FROM stdin;
+\.
+
+
+--
+-- Data for Name: _materialized_hypertable_3; Type: TABLE DATA; Schema: _timescaledb_internal; Owner: logparser
+--
+
+COPY _timescaledb_internal._materialized_hypertable_3 (bucket, tool_id, severity, event_count, critical_count, error_count, avg_temp_k, avg_pressure_pa) FROM stdin;
+\.
+
+
+--
+-- Data for Name: event_routing; Type: TABLE DATA; Schema: public; Owner: logparser
+--
+
+COPY public.event_routing (id, job_id, kafka_topic, routed_at) FROM stdin;
+1	c75cda78-0b04-400e-b1cd-2e47d99f1e9c	logs.p1	2026-04-20 05:27:57.760017+00
+3	e70dfd19-16be-4b10-8e30-8987e129e2e1	logs.p2	2026-04-20 05:38:08.012827+00
+5	0829e9a9-dd4d-44d7-bb7e-7ebdf2b3e88e	logs.p2	2026-04-20 05:40:54.932297+00
+7	b84f4be4-650c-4f3f-b04c-bce114ed7ed4	logs.p1	2026-04-20 05:41:49.482398+00
+\.
+
+
+--
+-- Data for Name: log_events; Type: TABLE DATA; Schema: public; Owner: logparser
+--
+
+COPY public.log_events (id, event_time, ingested_at, tool_id, vendor_id, machine_type, wafer_id, recipe_name, source_file, log_format, severity, priority, path, event_type, fault_code, process_step, temperature_k, pressure_pa, flow_slm, rf_power_w, raw_payload, normalized_payload, parse_confidence, normalize_confidence, job_id, reviewed_by_human) FROM stdin;
+\.
+
+
+--
+-- Data for Name: normalized_events; Type: TABLE DATA; Schema: public; Owner: logparser
+--
+
+COPY public.normalized_events (job_id, "timestamp", source, event_type, severity, message, ai_category, ai_root_cause, ai_recommended_action, confidence_score, requires_review, review_reason, created_at) FROM stdin;
+\.
+
+
+--
+-- Data for Name: parse_jobs; Type: TABLE DATA; Schema: public; Owner: logparser
+--
+
+COPY public.parse_jobs (id, created_at, updated_at, file_name, file_size_bytes, minio_raw_key, detected_format, status, dedup_key, is_duplicate, total_events, parsed_events, hot_events, cold_events, review_events, deadletter_events, detection_ms, extraction_ms, normalization_ms, routing_ms, error_message, error_stage) FROM stdin;
+\.
+
+
+--
+-- Data for Name: raw_logs; Type: TABLE DATA; Schema: public; Owner: logparser
+--
+
+COPY public.raw_logs (job_id, "timestamp", file_name, file_format, raw_content, file_hash, created_at) FROM stdin;
+\.
+
+
+--
+-- Data for Name: review_queue_status; Type: TABLE DATA; Schema: public; Owner: logparser
+--
+
+COPY public.review_queue_status (id, job_id, status, reviewer_notes, reviewed_at, created_at) FROM stdin;
+1	27ddf1b3-68b4-444a-99e5-c113e91626b8	pending	\N	\N	2026-04-18 16:50:11.603106+00
+2	fb2bca43-803f-4d5e-8d8d-4ff620c6149b	pending	\N	\N	2026-04-18 16:50:11.608563+00
+3	326d94f1-0db4-469d-8b2f-c37f8c4945f6	pending	\N	\N	2026-04-18 16:50:11.610015+00
+4	011cd0ae-02dc-4809-b9e0-8dcf76ea5bbe	pending	\N	\N	2026-04-18 16:50:19.656592+00
+5	a66a582d-13e4-4987-aff5-1a05560ff53e	pending	\N	\N	2026-04-18 16:50:19.663325+00
+6	8925a539-a6ad-44eb-b943-4438e6197c2e	pending	\N	\N	2026-04-18 16:50:19.665043+00
+7	f1293c76-b4d7-4ba2-9f4d-7404f4f9cbd5	pending	\N	\N	2026-04-18 16:50:19.666523+00
+8	bcdb47d7-19a5-451a-b5ce-c47b2e6782c1	pending	\N	\N	2026-04-18 16:50:19.667889+00
+9	9c614c4e-04d0-42be-ab15-854e7f7f695f	pending	\N	\N	2026-04-18 16:50:19.668972+00
+10	7917096e-38d2-4624-8633-f08e18445db8	pending	\N	\N	2026-04-18 16:50:19.670155+00
+11	2f1f226c-161c-4acc-b5df-b9dfc94512f4	pending	\N	\N	2026-04-18 16:50:19.671435+00
+12	339b4406-48f8-472f-88ba-875ff08c36f8	pending	\N	\N	2026-04-18 16:50:19.672942+00
+13	1169bec9-fd34-44ea-a1f0-0e0255ea42cf	pending	\N	\N	2026-04-18 16:50:19.673957+00
+14	be726f2d-3828-4aff-8e13-d56542bad488	pending	\N	\N	2026-04-18 17:19:19.254902+00
+15	5e83ebff-3bca-4a62-903e-695f22bb26b7	pending	\N	\N	2026-04-18 17:19:19.258631+00
+16	a5742606-fb28-40df-a374-b13f0fbdce88	pending	\N	\N	2026-04-18 17:19:19.259628+00
+17	1b1ba6d3-287c-417e-897b-a12c881161ea	pending	\N	\N	2026-04-18 17:19:27.2273+00
+18	063f6d2a-6550-4090-8c7e-7f60a4a436be	pending	\N	\N	2026-04-18 17:19:27.234308+00
+19	de36c881-5735-48d9-901e-269535611157	pending	\N	\N	2026-04-18 17:19:27.237434+00
+20	d80a0e8b-1800-4f73-aa9f-039ece6b4700	pending	\N	\N	2026-04-18 17:19:27.238727+00
+21	9bc9afd3-2f15-4bbb-9ee7-0941794b6211	pending	\N	\N	2026-04-18 17:19:27.240111+00
+22	7869f88b-9e6d-4236-95c4-a5582eeaad82	pending	\N	\N	2026-04-18 17:19:27.241239+00
+23	27d1b247-9f8b-4858-a7ce-7ec9f6d76361	pending	\N	\N	2026-04-18 17:19:27.242369+00
+24	84abc3c6-fa74-453a-b097-6596fc17be1a	pending	\N	\N	2026-04-18 17:19:27.243234+00
+25	c4c58739-f795-4c60-a44a-9a9c75761fdb	pending	\N	\N	2026-04-18 17:19:27.244081+00
+26	55c098fb-2013-4207-a4d1-ca273e0bad0e	pending	\N	\N	2026-04-18 17:19:27.244977+00
+27	78978cad-936a-4597-826f-c588d16044b7	pending	\N	\N	2026-04-18 17:22:35.447916+00
+28	a48b73c5-7ec1-4139-8211-5bf76580dc69	pending	\N	\N	2026-04-18 17:22:35.452369+00
+29	03e9bef4-f66b-4eaa-b1be-239e8377650e	pending	\N	\N	2026-04-18 17:22:35.45404+00
+30	5471e502-3602-470a-881e-7cb129f14990	pending	\N	\N	2026-04-18 17:22:43.478172+00
+31	96c9dca4-0ba0-41c6-bbdd-b6d75f26c73d	pending	\N	\N	2026-04-18 17:22:43.484704+00
+32	415c6d00-8f4e-46e3-a6aa-f057a54add3f	pending	\N	\N	2026-04-18 17:22:43.487526+00
+33	f3793e85-5ce7-442e-be54-e66ff10a9c0e	pending	\N	\N	2026-04-18 17:22:43.490359+00
+34	e3dcbf95-8da9-4862-945a-128aa75f510c	pending	\N	\N	2026-04-18 17:22:43.493631+00
+35	cbc43cab-f5aa-4d3f-af6a-a3c5d547ac98	pending	\N	\N	2026-04-18 17:22:43.497747+00
+36	13b21f4d-7748-47c3-8908-43fe06cec43b	pending	\N	\N	2026-04-18 17:22:43.499499+00
+37	e072240e-b92b-463b-93b3-c813aef36c96	pending	\N	\N	2026-04-18 17:22:43.50087+00
+38	31fded99-72f5-4f7f-b58d-7efca772435b	pending	\N	\N	2026-04-18 17:22:43.502401+00
+39	f05af4a0-6ee0-4af7-9a58-739445bfcef8	pending	\N	\N	2026-04-18 17:22:43.503412+00
+40	f537f917-4aba-442e-9443-35bf81e1274a	pending	\N	\N	2026-04-18 17:26:27.682079+00
+41	545fb980-5952-41b0-8ba9-187cf580c61e	pending	\N	\N	2026-04-18 17:26:27.687416+00
+42	ef7f7e52-29fd-4643-bdb2-39ba488711d3	pending	\N	\N	2026-04-18 17:26:27.689255+00
+43	82ea74dd-2db6-47ec-8451-296dc1e9e046	pending	\N	\N	2026-04-18 17:26:35.819629+00
+44	c2b3a63b-79d8-4e64-8222-1322c429c17a	pending	\N	\N	2026-04-18 17:26:35.822403+00
+45	8a981af6-1d2c-40b7-8bee-5698202b5799	pending	\N	\N	2026-04-18 17:26:35.824063+00
+46	f6c0f2e0-4d91-4a90-b7fa-d3ebf5b6a2de	pending	\N	\N	2026-04-18 17:26:35.826087+00
+47	ffc79d2f-84fb-406f-b4fa-d3ca596cb881	pending	\N	\N	2026-04-18 17:26:35.827395+00
+48	852824af-8dcf-4b18-bbe9-59df6e044a2b	pending	\N	\N	2026-04-18 17:26:35.828442+00
+49	848dc465-30d1-4ba7-9527-b23b2766dc58	pending	\N	\N	2026-04-18 17:26:35.82948+00
+50	965744e8-45ab-4c19-af2a-e20cdf66d8be	pending	\N	\N	2026-04-18 17:26:35.830713+00
+51	31756d3d-e601-42b7-b650-ad0edd9d2388	pending	\N	\N	2026-04-18 17:26:35.831577+00
+52	232284d7-3f97-41fa-903b-318bff2479cd	pending	\N	\N	2026-04-18 17:26:35.832423+00
+53	2bfe1763-c243-4307-8dcc-5c73942ff851	pending	\N	\N	2026-04-18 17:47:25.51007+00
+54	7dd391a5-3560-4daa-ab53-6b9685ac966c	pending	\N	\N	2026-04-18 17:47:25.515597+00
+55	9911cea4-7833-494c-8577-7fa40dec9487	pending	\N	\N	2026-04-18 17:47:25.516617+00
+56	0f331d32-54fe-4ae9-9b61-34b1adf79c2c	pending	\N	\N	2026-04-18 17:47:37.618108+00
+57	e48276ad-3252-4f84-8d92-12c56c98d2a5	pending	\N	\N	2026-04-18 17:47:37.626948+00
+58	82daec94-3c05-410d-a7e5-06680676bcf5	pending	\N	\N	2026-04-18 17:47:37.629073+00
+59	d44bde11-85fd-47a5-9910-7c3fa0983550	pending	\N	\N	2026-04-18 17:47:37.634097+00
+60	48eba3e6-cb19-4f55-bf87-d8117b3fde64	pending	\N	\N	2026-04-18 17:47:37.637019+00
+61	e4f52ea7-cefa-4a66-acca-ea1cc9d894cd	pending	\N	\N	2026-04-18 17:47:37.638933+00
+62	d2ac74ca-fb75-4acf-8e20-e44f078e3b8d	pending	\N	\N	2026-04-18 17:47:37.640809+00
+63	ae55b1c1-e11d-4752-abca-b7585f81dea2	pending	\N	\N	2026-04-18 17:47:37.642236+00
+64	606a6229-2182-4e9d-bf58-883e76a4baaa	pending	\N	\N	2026-04-18 17:47:37.644013+00
+65	77cc9716-621a-4635-af39-c2c1d8769d37	pending	\N	\N	2026-04-18 17:47:37.645428+00
+66	7c8cf53a-aeb4-4bfa-9d82-3e345a33ec7a	pending	\N	\N	2026-04-18 17:50:00.474275+00
+67	0e11e9f7-19e8-41e1-82e0-fe9d20916e6a	pending	\N	\N	2026-04-18 17:50:00.477215+00
+68	2f5bb9aa-6ad1-477e-a1e4-29638547ce7f	pending	\N	\N	2026-04-18 17:50:00.478624+00
+69	e3fd2590-8ce5-4690-b16d-c6c324968d96	pending	\N	\N	2026-04-18 17:50:12.601102+00
+70	730c3d71-25ea-47ee-b426-da45a24785eb	pending	\N	\N	2026-04-18 17:50:12.605602+00
+71	16686a6b-e0be-4d7d-a346-7bb3ae6c0fff	pending	\N	\N	2026-04-18 17:50:12.607658+00
+72	5f89623d-b365-4b6c-a20d-12b4201e6104	pending	\N	\N	2026-04-18 17:50:12.609715+00
+73	03959c29-bc91-4196-9d0f-8c10fa0e007e	pending	\N	\N	2026-04-18 17:50:12.610794+00
+74	bc934625-0308-4336-916c-ea2250de5874	pending	\N	\N	2026-04-18 17:50:12.611662+00
+75	38e56fad-b4a2-4d09-ae01-e353f9f9ae49	pending	\N	\N	2026-04-18 17:50:12.612709+00
+76	724ccf77-b34b-49b7-b3d8-775b631f6658	pending	\N	\N	2026-04-18 17:50:12.613564+00
+77	1efda8ce-fb01-4a0f-bcb9-04435dbf24af	pending	\N	\N	2026-04-18 17:50:12.614572+00
+78	dffcc0ce-5076-4bd5-adea-b7fcf55f12a1	pending	\N	\N	2026-04-18 17:50:12.615451+00
+79	27dad422-5aaa-4533-a826-aa057f4261e7	pending	\N	\N	2026-04-18 18:09:52.253445+00
+80	76c544bc-ebc3-4123-8e3d-5b49ce3e47a5	pending	\N	\N	2026-04-18 18:09:52.258096+00
+81	85de1d27-7164-4130-801e-3969563e37eb	pending	\N	\N	2026-04-18 18:09:52.259126+00
+82	fe12f95c-a1c8-47ff-8655-940ce36c0cfb	pending	\N	\N	2026-04-18 18:10:00.270236+00
+83	9fe95d19-bebc-4bbb-90d3-43e106d9d099	pending	\N	\N	2026-04-18 18:10:00.27644+00
+84	c3399947-0b00-40ff-8344-b33631e0b512	pending	\N	\N	2026-04-18 18:10:00.279704+00
+85	74b2a51c-27ae-4efd-be6e-7e6e6a62aeb9	pending	\N	\N	2026-04-18 18:10:00.281083+00
+86	0f91ab82-1c11-4e4f-8790-fd498e70386f	pending	\N	\N	2026-04-18 18:10:00.282038+00
+87	3a68742a-d073-4c16-abde-ea6476cdf4c8	pending	\N	\N	2026-04-18 18:10:00.283016+00
+88	32c5c1b1-37c7-42c5-9a5c-5ea4ee207bf8	pending	\N	\N	2026-04-18 18:10:00.283943+00
+89	0f8cccf8-9a11-4d48-bad2-e470bb4a1482	pending	\N	\N	2026-04-18 18:10:00.284901+00
+90	2b891abb-a115-4fbb-80c5-9ff8884a3545	pending	\N	\N	2026-04-18 18:10:00.285876+00
+91	d36d6908-aa12-4d19-acc1-3b6f58714396	pending	\N	\N	2026-04-18 18:10:00.287673+00
+92	c3f61d70-97f8-47b8-9a92-0bb204814136	pending	\N	\N	2026-04-18 18:23:27.773462+00
+93	38181f5c-b09f-4807-973c-867f53174a45	pending	\N	\N	2026-04-18 18:23:27.775453+00
+94	0f635140-162c-46e4-8c6e-8d3abf51bc5b	pending	\N	\N	2026-04-18 18:23:27.777022+00
+95	7cc1ef06-9297-43a6-ba08-248682bf1938	pending	\N	\N	2026-04-18 18:23:35.792165+00
+96	0dbe2061-9af1-48d8-9d5b-38f649b39877	pending	\N	\N	2026-04-18 18:23:35.794496+00
+97	602c3f49-3d2f-49c7-ad3c-6743ae5c806c	pending	\N	\N	2026-04-18 18:23:35.795818+00
+98	e5bacd37-bc05-4beb-a4ff-46107362248e	pending	\N	\N	2026-04-18 18:23:35.798145+00
+99	f4a1dc07-7d0e-4abe-9d43-51f96b01a21c	pending	\N	\N	2026-04-18 18:23:35.799426+00
+100	3fece606-316c-4c20-9ccd-0e355cd83bff	pending	\N	\N	2026-04-18 18:23:35.800305+00
+101	9cf586b1-5130-469e-8c87-d53e9e1097e9	pending	\N	\N	2026-04-18 18:23:35.802768+00
+102	6568ac95-3d24-45dd-95a2-01eaaab64ca4	pending	\N	\N	2026-04-18 18:23:35.804102+00
+103	92e12e55-e684-43dd-b78b-f6ac7c90257b	pending	\N	\N	2026-04-18 18:23:35.805526+00
+104	4ac87f59-7c41-42b5-afa8-eebe98f6bb74	pending	\N	\N	2026-04-18 18:23:35.806745+00
+105	eee49d2f-3380-4650-885c-92e399c05411	pending	\N	\N	2026-04-18 18:35:57.463133+00
+106	9f129f8c-7adc-4f01-92fb-4f8d30679db6	pending	\N	\N	2026-04-18 18:35:57.467263+00
+107	f598edad-e2bb-4bb2-bf5b-18f50d3ca6ac	pending	\N	\N	2026-04-18 18:35:57.468503+00
+108	8b87a6b0-ca7d-483e-bee1-fc486f9490b8	pending	\N	\N	2026-04-18 18:36:05.544412+00
+109	f615e67a-b9f7-4bba-b8be-e64f03204e26	pending	\N	\N	2026-04-18 18:36:05.548763+00
+110	46ea9718-2f5a-47f2-a0c1-a3ce96141392	pending	\N	\N	2026-04-18 18:36:05.552346+00
+111	34079071-d475-47b7-a56f-50528bde0005	pending	\N	\N	2026-04-18 18:36:05.5543+00
+112	ea9d567d-4eb7-40a7-a342-3816b37b785d	pending	\N	\N	2026-04-18 18:36:05.55591+00
+113	c814ddfe-8804-4bfc-9501-defdd999d65f	pending	\N	\N	2026-04-18 18:36:05.557378+00
+114	4febe754-cc2c-4c05-a110-b210df9b6c78	pending	\N	\N	2026-04-18 18:36:05.558526+00
+115	7125c2e9-e78a-4bde-9ba2-31a55317dc19	pending	\N	\N	2026-04-18 18:36:05.559567+00
+116	b0978bbb-325b-487e-aff8-820ba155a5ff	pending	\N	\N	2026-04-18 18:36:05.561137+00
+117	9ff4a6ce-9f9c-4964-b6c0-c97862d6330d	pending	\N	\N	2026-04-18 18:36:05.562299+00
+118	106311b1-eb3b-47c8-898d-7a07d0c9389f	pending	\N	\N	2026-04-18 18:44:42.150864+00
+119	2c896685-d410-474a-b01c-f228f7bd2903	pending	\N	\N	2026-04-18 18:44:42.154057+00
+120	7ba7a64b-9abd-4120-a370-2bb9151f6d3c	pending	\N	\N	2026-04-18 18:44:42.15536+00
+121	070f9073-c6e5-47fd-bee7-2272c3f93ce7	pending	\N	\N	2026-04-18 18:44:50.237388+00
+122	a3883435-3a20-4dd5-a8ef-317377c71e3a	pending	\N	\N	2026-04-18 18:44:50.242496+00
+123	7cd48966-0afe-4f55-be5e-18a267591176	pending	\N	\N	2026-04-18 18:44:50.245302+00
+124	14bf5df4-cb2e-4953-8e9c-285460c5e6f9	pending	\N	\N	2026-04-18 18:44:50.247413+00
+125	8f5db82f-fee5-4d97-abc9-8814695f5692	pending	\N	\N	2026-04-18 18:44:50.24868+00
+126	303e6d18-9ecc-4012-b2ac-278fdac1f411	pending	\N	\N	2026-04-18 18:44:50.249523+00
+127	e7bad77f-595a-4210-864f-c484359064d1	pending	\N	\N	2026-04-18 18:44:50.25043+00
+128	e910db90-a050-4af8-bcce-aec7d338ce23	pending	\N	\N	2026-04-18 18:44:50.251377+00
+129	8d094a16-7187-4ef2-825b-ce4075567c83	pending	\N	\N	2026-04-18 18:44:50.252649+00
+130	2965dd92-07be-4b46-b3c1-d4c30bc8cc43	pending	\N	\N	2026-04-18 18:44:50.253849+00
+131	032ee663-a0f6-4b80-8ef1-843e015c8d5c	pending	\N	\N	2026-04-18 18:52:43.915072+00
+132	b17cbe50-0bf4-4fa6-87a3-0f0840858dc8	pending	\N	\N	2026-04-18 18:52:43.919782+00
+133	4cb2768f-ca5d-47d3-a2a0-916651029ced	pending	\N	\N	2026-04-18 18:52:43.921125+00
+134	a5c23b05-6b72-4943-8e7d-d34006d3b079	pending	\N	\N	2026-04-18 18:52:51.999417+00
+135	e893e4a8-69e5-4f7d-94d7-0d54f1d1e1c2	pending	\N	\N	2026-04-18 18:52:52.002007+00
+136	413dc93f-c9f9-41bc-8ed5-c924d61c559d	pending	\N	\N	2026-04-18 18:52:52.003616+00
+137	8245a13f-974a-4180-a4e9-07dfb81a1dc4	pending	\N	\N	2026-04-18 18:52:52.00504+00
+138	5ebf5f1c-3f86-44b7-a569-7c1c3a6d72e7	pending	\N	\N	2026-04-18 18:52:52.00695+00
+139	eacbfead-c366-4e60-9c28-656595411946	pending	\N	\N	2026-04-18 18:52:52.008666+00
+140	6bfafb23-e1be-4604-9e5d-f3d45761aef3	pending	\N	\N	2026-04-18 18:52:52.009591+00
+141	35c2a38f-0113-44c1-a7bf-b0b1e11eb0b6	pending	\N	\N	2026-04-18 18:52:52.010351+00
+142	acaea2cf-248c-410e-aa5c-21d28afd1c7c	pending	\N	\N	2026-04-18 18:52:52.011955+00
+143	cac981bf-55e2-42e7-8215-180f4909e2c1	pending	\N	\N	2026-04-18 18:52:52.013061+00
+144	c75cda78-0b04-400e-b1cd-2e47d99f1e9c	pending	\N	\N	2026-04-20 05:27:57.765688+00
+146	e70dfd19-16be-4b10-8e30-8987e129e2e1	pending	\N	\N	2026-04-20 05:38:08.013784+00
+152	0829e9a9-dd4d-44d7-bb7e-7ebdf2b3e88e	pending	\N	\N	2026-04-20 05:40:54.932955+00
+181	b84f4be4-650c-4f3f-b04c-bce114ed7ed4	pending	\N	\N	2026-04-20 05:41:49.486358+00
+\.
+
+
+--
+-- Name: bgw_job_id_seq; Type: SEQUENCE SET; Schema: _timescaledb_catalog; Owner: logparser
+--
+
+SELECT pg_catalog.setval('_timescaledb_catalog.bgw_job_id_seq', 1005, true);
+
+
+--
+-- Name: chunk_column_stats_id_seq; Type: SEQUENCE SET; Schema: _timescaledb_catalog; Owner: logparser
+--
+
+SELECT pg_catalog.setval('_timescaledb_catalog.chunk_column_stats_id_seq', 1, false);
+
+
+--
+-- Name: chunk_constraint_name; Type: SEQUENCE SET; Schema: _timescaledb_catalog; Owner: logparser
+--
+
+SELECT pg_catalog.setval('_timescaledb_catalog.chunk_constraint_name', 2, true);
+
+
+--
+-- Name: chunk_id_seq; Type: SEQUENCE SET; Schema: _timescaledb_catalog; Owner: logparser
+--
+
+SELECT pg_catalog.setval('_timescaledb_catalog.chunk_id_seq', 2, true);
+
+
+--
+-- Name: dimension_id_seq; Type: SEQUENCE SET; Schema: _timescaledb_catalog; Owner: logparser
+--
+
+SELECT pg_catalog.setval('_timescaledb_catalog.dimension_id_seq', 5, true);
+
+
+--
+-- Name: dimension_slice_id_seq; Type: SEQUENCE SET; Schema: _timescaledb_catalog; Owner: logparser
+--
+
+SELECT pg_catalog.setval('_timescaledb_catalog.dimension_slice_id_seq', 2, true);
+
+
+--
+-- Name: hypertable_id_seq; Type: SEQUENCE SET; Schema: _timescaledb_catalog; Owner: logparser
+--
+
+SELECT pg_catalog.setval('_timescaledb_catalog.hypertable_id_seq', 6, true);
+
+
+--
+-- Name: event_routing_id_seq; Type: SEQUENCE SET; Schema: public; Owner: logparser
+--
+
+SELECT pg_catalog.setval('public.event_routing_id_seq', 8, true);
+
+
+--
+-- Name: review_queue_status_id_seq; Type: SEQUENCE SET; Schema: public; Owner: logparser
+--
+
+SELECT pg_catalog.setval('public.review_queue_status_id_seq', 182, true);
+
+
+--
+-- Name: _hyper_6_1_chunk 1_1_normalized_events_pkey; Type: CONSTRAINT; Schema: _timescaledb_internal; Owner: logparser
+--
+
+ALTER TABLE ONLY _timescaledb_internal._hyper_6_1_chunk
+    ADD CONSTRAINT "1_1_normalized_events_pkey" PRIMARY KEY (job_id, "timestamp");
+
+
+--
+-- Name: _hyper_6_2_chunk 2_2_normalized_events_pkey; Type: CONSTRAINT; Schema: _timescaledb_internal; Owner: logparser
+--
+
+ALTER TABLE ONLY _timescaledb_internal._hyper_6_2_chunk
+    ADD CONSTRAINT "2_2_normalized_events_pkey" PRIMARY KEY (job_id, "timestamp");
+
+
+--
+-- Name: event_routing event_routing_job_id_key; Type: CONSTRAINT; Schema: public; Owner: logparser
+--
+
+ALTER TABLE ONLY public.event_routing
+    ADD CONSTRAINT event_routing_job_id_key UNIQUE (job_id);
+
+
+--
+-- Name: event_routing event_routing_pkey; Type: CONSTRAINT; Schema: public; Owner: logparser
+--
+
+ALTER TABLE ONLY public.event_routing
+    ADD CONSTRAINT event_routing_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: log_events log_events_pkey; Type: CONSTRAINT; Schema: public; Owner: logparser
+--
+
+ALTER TABLE ONLY public.log_events
+    ADD CONSTRAINT log_events_pkey PRIMARY KEY (id, event_time);
+
+
+--
+-- Name: normalized_events normalized_events_pkey; Type: CONSTRAINT; Schema: public; Owner: logparser
+--
+
+ALTER TABLE ONLY public.normalized_events
+    ADD CONSTRAINT normalized_events_pkey PRIMARY KEY (job_id, "timestamp");
+
+
+--
+-- Name: parse_jobs parse_jobs_pkey; Type: CONSTRAINT; Schema: public; Owner: logparser
+--
+
+ALTER TABLE ONLY public.parse_jobs
+    ADD CONSTRAINT parse_jobs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: raw_logs raw_logs_pkey; Type: CONSTRAINT; Schema: public; Owner: logparser
+--
+
+ALTER TABLE ONLY public.raw_logs
+    ADD CONSTRAINT raw_logs_pkey PRIMARY KEY (job_id, "timestamp");
+
+
+--
+-- Name: review_queue_status review_queue_status_job_id_key; Type: CONSTRAINT; Schema: public; Owner: logparser
+--
+
+ALTER TABLE ONLY public.review_queue_status
+    ADD CONSTRAINT review_queue_status_job_id_key UNIQUE (job_id);
+
+
+--
+-- Name: review_queue_status review_queue_status_pkey; Type: CONSTRAINT; Schema: public; Owner: logparser
+--
+
+ALTER TABLE ONLY public.review_queue_status
+    ADD CONSTRAINT review_queue_status_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: _hyper_6_1_chunk_idx_normalized_category; Type: INDEX; Schema: _timescaledb_internal; Owner: logparser
+--
+
+CREATE INDEX _hyper_6_1_chunk_idx_normalized_category ON _timescaledb_internal._hyper_6_1_chunk USING btree (ai_category);
+
+
+--
+-- Name: _hyper_6_1_chunk_idx_normalized_severity; Type: INDEX; Schema: _timescaledb_internal; Owner: logparser
+--
+
+CREATE INDEX _hyper_6_1_chunk_idx_normalized_severity ON _timescaledb_internal._hyper_6_1_chunk USING btree (severity);
+
+
+--
+-- Name: _hyper_6_1_chunk_idx_normalized_source; Type: INDEX; Schema: _timescaledb_internal; Owner: logparser
+--
+
+CREATE INDEX _hyper_6_1_chunk_idx_normalized_source ON _timescaledb_internal._hyper_6_1_chunk USING btree (source);
+
+
+--
+-- Name: _hyper_6_1_chunk_normalized_events_timestamp_idx; Type: INDEX; Schema: _timescaledb_internal; Owner: logparser
+--
+
+CREATE INDEX _hyper_6_1_chunk_normalized_events_timestamp_idx ON _timescaledb_internal._hyper_6_1_chunk USING btree ("timestamp" DESC);
+
+
+--
+-- Name: _hyper_6_2_chunk_idx_normalized_category; Type: INDEX; Schema: _timescaledb_internal; Owner: logparser
+--
+
+CREATE INDEX _hyper_6_2_chunk_idx_normalized_category ON _timescaledb_internal._hyper_6_2_chunk USING btree (ai_category);
+
+
+--
+-- Name: _hyper_6_2_chunk_idx_normalized_severity; Type: INDEX; Schema: _timescaledb_internal; Owner: logparser
+--
+
+CREATE INDEX _hyper_6_2_chunk_idx_normalized_severity ON _timescaledb_internal._hyper_6_2_chunk USING btree (severity);
+
+
+--
+-- Name: _hyper_6_2_chunk_idx_normalized_source; Type: INDEX; Schema: _timescaledb_internal; Owner: logparser
+--
+
+CREATE INDEX _hyper_6_2_chunk_idx_normalized_source ON _timescaledb_internal._hyper_6_2_chunk USING btree (source);
+
+
+--
+-- Name: _hyper_6_2_chunk_normalized_events_timestamp_idx; Type: INDEX; Schema: _timescaledb_internal; Owner: logparser
+--
+
+CREATE INDEX _hyper_6_2_chunk_normalized_events_timestamp_idx ON _timescaledb_internal._hyper_6_2_chunk USING btree ("timestamp" DESC);
+
+
+--
+-- Name: _materialized_hypertable_2_bucket_idx; Type: INDEX; Schema: _timescaledb_internal; Owner: logparser
+--
+
+CREATE INDEX _materialized_hypertable_2_bucket_idx ON _timescaledb_internal._materialized_hypertable_2 USING btree (bucket DESC);
+
+
+--
+-- Name: _materialized_hypertable_2_severity_bucket_idx; Type: INDEX; Schema: _timescaledb_internal; Owner: logparser
+--
+
+CREATE INDEX _materialized_hypertable_2_severity_bucket_idx ON _timescaledb_internal._materialized_hypertable_2 USING btree (severity, bucket DESC);
+
+
+--
+-- Name: _materialized_hypertable_2_tool_id_bucket_idx; Type: INDEX; Schema: _timescaledb_internal; Owner: logparser
+--
+
+CREATE INDEX _materialized_hypertable_2_tool_id_bucket_idx ON _timescaledb_internal._materialized_hypertable_2 USING btree (tool_id, bucket DESC);
+
+
+--
+-- Name: _materialized_hypertable_3_bucket_idx; Type: INDEX; Schema: _timescaledb_internal; Owner: logparser
+--
+
+CREATE INDEX _materialized_hypertable_3_bucket_idx ON _timescaledb_internal._materialized_hypertable_3 USING btree (bucket DESC);
+
+
+--
+-- Name: _materialized_hypertable_3_severity_bucket_idx; Type: INDEX; Schema: _timescaledb_internal; Owner: logparser
+--
+
+CREATE INDEX _materialized_hypertable_3_severity_bucket_idx ON _timescaledb_internal._materialized_hypertable_3 USING btree (severity, bucket DESC);
+
+
+--
+-- Name: _materialized_hypertable_3_tool_id_bucket_idx; Type: INDEX; Schema: _timescaledb_internal; Owner: logparser
+--
+
+CREATE INDEX _materialized_hypertable_3_tool_id_bucket_idx ON _timescaledb_internal._materialized_hypertable_3 USING btree (tool_id, bucket DESC);
+
+
+--
+-- Name: idx_event_routing_topic; Type: INDEX; Schema: public; Owner: logparser
+--
+
+CREATE INDEX idx_event_routing_topic ON public.event_routing USING btree (kafka_topic);
+
+
+--
+-- Name: idx_events_hot_path; Type: INDEX; Schema: public; Owner: logparser
+--
+
+CREATE INDEX idx_events_hot_path ON public.log_events USING btree (event_time DESC) WHERE (path = 'HOT'::public.path_type);
+
+
+--
+-- Name: idx_events_job_id; Type: INDEX; Schema: public; Owner: logparser
+--
+
+CREATE INDEX idx_events_job_id ON public.log_events USING btree (job_id);
+
+
+--
+-- Name: idx_events_normalized_gin; Type: INDEX; Schema: public; Owner: logparser
+--
+
+CREATE INDEX idx_events_normalized_gin ON public.log_events USING gin (normalized_payload);
+
+
+--
+-- Name: idx_events_priority_time; Type: INDEX; Schema: public; Owner: logparser
+--
+
+CREATE INDEX idx_events_priority_time ON public.log_events USING btree (priority, event_time DESC);
+
+
+--
+-- Name: idx_events_severity_time; Type: INDEX; Schema: public; Owner: logparser
+--
+
+CREATE INDEX idx_events_severity_time ON public.log_events USING btree (severity, event_time DESC);
+
+
+--
+-- Name: idx_events_tool_time; Type: INDEX; Schema: public; Owner: logparser
+--
+
+CREATE INDEX idx_events_tool_time ON public.log_events USING btree (tool_id, event_time DESC);
+
+
+--
+-- Name: idx_normalized_category; Type: INDEX; Schema: public; Owner: logparser
+--
+
+CREATE INDEX idx_normalized_category ON public.normalized_events USING btree (ai_category);
+
+
+--
+-- Name: idx_normalized_severity; Type: INDEX; Schema: public; Owner: logparser
+--
+
+CREATE INDEX idx_normalized_severity ON public.normalized_events USING btree (severity);
+
+
+--
+-- Name: idx_normalized_source; Type: INDEX; Schema: public; Owner: logparser
+--
+
+CREATE INDEX idx_normalized_source ON public.normalized_events USING btree (source);
+
+
+--
+-- Name: idx_normalized_timestamp; Type: INDEX; Schema: public; Owner: logparser
+--
+
+CREATE INDEX idx_normalized_timestamp ON public.normalized_events USING btree ("timestamp" DESC);
+
+
+--
+-- Name: idx_raw_logs_file_hash; Type: INDEX; Schema: public; Owner: logparser
+--
+
+CREATE INDEX idx_raw_logs_file_hash ON public.raw_logs USING btree (file_hash);
+
+
+--
+-- Name: idx_raw_logs_timestamp; Type: INDEX; Schema: public; Owner: logparser
+--
+
+CREATE INDEX idx_raw_logs_timestamp ON public.raw_logs USING btree ("timestamp" DESC);
+
+
+--
+-- Name: idx_review_status; Type: INDEX; Schema: public; Owner: logparser
+--
+
+CREATE INDEX idx_review_status ON public.review_queue_status USING btree (status);
+
+
+--
+-- Name: log_events_event_time_idx; Type: INDEX; Schema: public; Owner: logparser
+--
+
+CREATE INDEX log_events_event_time_idx ON public.log_events USING btree (event_time DESC);
+
+
+--
+-- Name: normalized_events_timestamp_idx; Type: INDEX; Schema: public; Owner: logparser
+--
+
+CREATE INDEX normalized_events_timestamp_idx ON public.normalized_events USING btree ("timestamp" DESC);
+
+
+--
+-- Name: raw_logs_timestamp_idx; Type: INDEX; Schema: public; Owner: logparser
+--
+
+CREATE INDEX raw_logs_timestamp_idx ON public.raw_logs USING btree ("timestamp" DESC);
+
+
+--
+-- Name: events_by_hour; Type: MATERIALIZED VIEW DATA; Schema: public; Owner: logparser
+--
+
+REFRESH MATERIALIZED VIEW public.events_by_hour;
+
+
+--
+-- Name: events_by_machine_daily; Type: MATERIALIZED VIEW DATA; Schema: public; Owner: logparser
+--
+
+REFRESH MATERIALIZED VIEW public.events_by_machine_daily;
+
+
+--
+-- PostgreSQL database dump complete
+--
+
+\unrestrict EnV84pwdfLUhsIDvLugsdV5m6fXIf8UPWBKwOsBneI1oIQ3GNcaP7buVC4fVoih
+

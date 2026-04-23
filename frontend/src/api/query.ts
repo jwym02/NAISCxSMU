@@ -1,10 +1,11 @@
 const BASE = "/query-api";
 
 export interface QueryResponse {
-  sql: string;
-  results: Record<string, unknown>[];
-  row_count?: number;
-  execution_time_ms?: number;
+  original_query: string;
+  generated_sql: string;
+  rows: Record<string, unknown>[];
+  row_count: number;
+  execution_time_ms: number;
 }
 
 export async function runQuery(query: string): Promise<QueryResponse> {

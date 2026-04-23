@@ -36,10 +36,16 @@ const TOOLTIP_STYLE = {
 
 export function EventChart({ data, chartType, onChartTypeChange }: EventChartProps) {
   const chartData = useMemo<ChartEntry[]>(() => {
-    if (!data?.data.length) return [];
+    if (!data?.data.length) {
+      console.log("[EventChart] No data provided", data);
+      return [];
+    }
+    
+    console.log("[EventChart] Processing data:", data.data);
     const map = new Map<string, ChartEntry>();
 
     for (const pt of data.data) {
+      console.log(`[EventChart] Processing point: hour=${pt.hour}, severity=${pt.severity}, count=${pt.count}`);
       if (!map.has(pt.hour)) {
         const d = new Date(pt.hour);
         const time = d.toLocaleTimeString("en-US", {
@@ -50,12 +56,23 @@ export function EventChart({ data, chartType, onChartTypeChange }: EventChartPro
         map.set(pt.hour, { time, nonUrgent: 0, critical: 0, errors: 0 });
       }
       const entry = map.get(pt.hour)!;
-      if (pt.severity === "CRITICAL") entry.critical += pt.count;
-      else if (pt.severity === "ERROR") entry.errors += pt.count;
-      else entry.nonUrgent += pt.count;
+      if (pt.severity === "CRITICAL") {
+        entry.critical += pt.count;
+        console.log(`[EventChart] Added ${pt.count} CRITICAL events`);
+      }
+      else if (pt.severity === "ERROR") {
+        entry.errors += pt.count;
+        console.log(`[EventChart] Added ${pt.count} ERROR events`);
+      }
+      else {
+        entry.nonUrgent += pt.count;
+        console.log(`[EventChart] Added ${pt.count} NON-URGENT events (${pt.severity})`);
+      }
     }
 
-    return Array.from(map.values());
+    const result = Array.from(map.values());
+    console.log("[EventChart] Final chart data:", result);
+    return result;
   }, [data]);
 
   const sharedAxisProps = {
@@ -126,11 +143,18 @@ export function EventChart({ data, chartType, onChartTypeChange }: EventChartPro
       <div className="chart-subtitle">EVENTS OVER TIME (LAST 12 HRS)</div>
 
       {chartData.length === 0 ? (
-        <div className="chart-empty">No event data for this period</div>
+        <div className="chart-empty">
+          {data ? "No event data for this period" : "Loading..."}
+        </div>
       ) : (
-        <ResponsiveContainer width="100%" height={220}>
-          {renderChart()}
-        </ResponsiveContainer>
+        <>
+          <div style={{ fontSize: 10, color: "#6e7681", marginBottom: 8 }}>
+            {chartData.length} time bucket{chartData.length !== 1 ? "s" : ""} • {JSON.stringify(chartData[0])}
+          </div>
+          <ResponsiveContainer width="100%" height={220}>
+            {renderChart()}
+          </ResponsiveContainer>
+        </>
       )}
     </div>
   );

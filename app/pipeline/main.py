@@ -26,6 +26,7 @@ from app.pipeline.ingest import ingest_log
 from app.pipeline.parser import parse_log
 from app.pipeline.normalizer import normalize_log
 from app.pipeline.router import route_event
+from app.pipeline.routes import router
 from app.shared.db import (
     get_pool, close_pool, init_schema,
     insert_raw_log, insert_normalized_event, insert_event_routing,
@@ -37,6 +38,9 @@ logger = logging.getLogger(__name__)
 
 # FastAPI app
 app = FastAPI(title="Pipeline Service")
+
+# Mount routes
+app.include_router(router)
 
 
 class ProcessResult(BaseModel):

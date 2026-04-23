@@ -138,6 +138,109 @@ DATABASE_SCHEMA = """
 """
 
 
+def _generate_smart_fallback_sql(nl_query: str, time_range_hours: int = 24, limit: int = 100) -> str:
+    """
+    Generate SQL by parsing keywords from natural language query.
+    Fallback when LLM is unavailable.
+    """
+    logger.info(f"[fallback_sql] Generating SQL from NL query: {nl_query}")
+    query_lower = nl_query.lower()
+    
+    # Parse natural language time ranges
+    if "today" in query_lower:
+        time_range_hours = 24
+        logger.info(f"[fallback_sql] Detected 'today' → 24 hours")
+    elif "past 7 days" in query_lower or "7 days" in query_lower:
+        time_range_hours = 7 * 24  # 168 hours
+        logger.info(f"[fallback_sql] Detected '7 days' → 168 hours")
+    elif "past 5 days" in query_lower or "5 days" in query_lower:
+        time_range_hours = 5 * 24  # 120 hours
+        logger.info(f"[fallback_sql] Detected '5 days' → 120 hours")
+    elif "past 30 days" in query_lower or "month" in query_lower:
+        time_range_hours = 30 * 24  # 720 hours
+        logger.info(f"[fallback_sql] Detected 'month' → 720 hours")
+    elif "week" in query_lower:
+        time_range_hours = 7 * 24  # 168 hours
+        logger.info(f"[fallback_sql] Detected 'week' → 168 hours")
+    else:
+        logger.info(f"[fallback_sql] Using default time range: {time_range_hours} hours")
+    
+    # Build WHERE clause with proper parentheses
+    where_parts = [f"(timestamp > NOW() - INTERVAL '{time_range_hours} hours')"]
+    
+    # Check for severity keywords (use UPPER to match both cases)
+    severity_filters = []
+    if any(word in query_lower for word in ['critical', 'severity = critical']):
+        severity_filters.append("'CRITICAL'")
+        logger.info(f"[fallback_sql] Detected 'CRITICAL' keyword")
+    if any(word in query_lower for word in ['error', 'errors']):
+        severity_filters.append("'ERROR'")
+        logger.info(f"[fallback_sql] Detected 'ERROR' keyword")
+    if any(word in query_lower for word in ['warning']):
+        severity_filters.append("'WARNING'")
+        logger.info(f"[fallback_sql] Detected 'WARNING' keyword")
+    if any(word in query_lower for word in ['info']):
+        severity_filters.append("'INFO'")
+        logger.info(f"[fallback_sql] Detected 'INFO' keyword")
+    
+    logger.info(f"[fallback_sql] Severity filters: {severity_filters}")
+    
+    if severity_filters:
+        # Use UPPER to handle case-insensitive matching
+        severity_clause = f"UPPER(severity) IN ({', '.join(severity_filters)})"
+        where_parts.append(severity_clause)
+    
+    base_where = " AND ".join(where_parts)
+    logger.info(f"[fallback_sql] Final WHERE clause: {base_where}")
+    logger.info(f"[fallback_sql] Time range: {time_range_hours} hours")
+    
+    # Check for keywords that suggest aggregation or showing all events
+    # "show me all" = detail records (NOT aggregated)
+    # "count/summary/trend" = aggregated data
+    wants_aggregation = any(word in query_lower for word in ['count', 'how many', 'total', 'summary', 'by hour', 'by day', 'trend', 'distribution', 'breakdown'])
+    wants_all_events = any(word in query_lower for word in ['show me all', 'list', 'get all', 'fetch', 'retrieve'])
+    
+    logger.info(f"[fallback_sql] wants_aggregation: {wants_aggregation}, wants_all_events: {wants_all_events}")
+    
+    # If asking for aggregation/analysis, return aggregated results by hour and severity for charting
+    # "show me all X" means return the actual records, not a summary
+    if wants_aggregation and not wants_all_events:
+        # Return aggregated results by hour and severity for charting
+        sql = f"""
+SELECT 
+  time_bucket('1 hour', timestamp) as hour,
+  UPPER(severity) as severity,
+  COUNT(*) as event_count
+FROM normalized_events
+WHERE {base_where}
+GROUP BY time_bucket('1 hour', timestamp), UPPER(severity)
+ORDER BY hour DESC
+        """.strip()
+        logger.info(f"[fallback_sql] Generated aggregated query (for charting/analysis)")
+        return sql
+    
+    # Default: return all matching events with relevant columns
+    # Select key columns that are most useful for reviewing events
+    sql = f"""
+SELECT 
+  timestamp,
+  source,
+  severity,
+  event_type,
+  message,
+  ai_category,
+  ai_root_cause,
+  ai_recommended_action,
+  confidence_score
+FROM normalized_events
+WHERE {base_where}
+ORDER BY timestamp DESC
+LIMIT {limit}
+    """.strip()
+    logger.info(f"[fallback_sql] Generated detailed events query with {limit} limit")
+    return sql
+
+
 async def generate_sql(nl_query: str, limit: int = 100, time_range_hours: int = 24) -> str:
     """
     Convert natural language query to SQL using OpenRouter LLM.
@@ -163,9 +266,17 @@ async def generate_sql(nl_query: str, limit: int = 100, time_range_hours: int = 
 
 {DATABASE_SCHEMA}
 
+CRITICAL COLUMN MAPPINGS:
+- Use 'severity' column (not 'event_type') for filtering by log level: CRITICAL, ERROR, WARNING, INFO
+- Use 'event_type' column only for specific event types like: maintenance, thermal, temperature_reading, etc.
+- Always use UPPER(severity) for case-insensitive matching of severity levels
+- 'info' queries should filter: UPPER(severity) IN ('INFO')
+- 'error' queries should filter: UPPER(severity) IN ('ERROR') 
+- 'critical' queries should filter: UPPER(severity) IN ('CRITICAL')
+
 Convert the following natural language query to SQL. Return ONLY the SQL query, no explanation.
 The SQL should be safe, efficient, and return meaningful results.
-Use LIMIT {100} by default unless specified otherwise.
+Use LIMIT {limit} by default unless specified otherwise.
 Always use timestamps for time-based queries.
 Return only SELECT queries (no INSERT, UPDATE, DELETE).
 
@@ -174,6 +285,8 @@ Natural Language Query: {nl_query}
 SQL Query:"""
 
     try:
+        logger.info(f"[generate_sql] Calling OpenRouter API with model: {NL2SQL_MODEL}")
+        logger.info(f"[generate_sql] API Key configured: {bool(OPENROUTER_API_KEY)}")
         async with httpx.AsyncClient(verify=False) as client:
             response = await client.post(
                 f"{OPENROUTER_URL}/chat/completions",
@@ -193,29 +306,44 @@ SQL Query:"""
                 timeout=30.0
             )
             
+            logger.info(f"[generate_sql] Response status: {response.status_code}")
+            
             if response.status_code != 200:
-                logger.error(f"OpenRouter API error: {response.text}")
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"LLM API error: {response.status_code}"
-                )
+                logger.error(f"[generate_sql] OpenRouter API error: {response.text}")
+                logger.warning(f"[generate_sql] Status code {response.status_code}, falling back to smart fallback")
+                return _generate_smart_fallback_sql(nl_query, time_range_hours, limit)
             
             result = response.json()
-            logger.info(f"OpenRouter full response: {result}")
+            logger.info(f"[generate_sql] Response keys: {result.keys()}")
+            logger.info(f"[generate_sql] Full response: {json.dumps(result, indent=2)[:500]}")
             
             # Handle None content gracefully
             try:
                 sql_query = result['choices'][0]['message']['content']
+                logger.info(f"[generate_sql] LLM returned: {sql_query[:100] if sql_query else '(empty)'}")
+                
                 if not sql_query or not sql_query.strip():
-                    logger.warning("AI returned empty response, using fallback query")
-                    # Generic fallback for any query
-                    sql_query = f"SELECT * FROM normalized_events WHERE timestamp > NOW() - INTERVAL '{time_range_hours} hours' ORDER BY timestamp DESC LIMIT {limit}"
+                    logger.warning(f"[generate_sql] AI returned empty response, using smart fallback query")
+                    sql_query = _generate_smart_fallback_sql(nl_query, time_range_hours, limit)
                 else:
                     sql_query = sql_query.strip()
+                    
+                    # Validate LLM query - check for common mistakes
+                    # If query mentions 'info'/'error'/'critical' but filters by event_type, fall back
+                    query_lower = nl_query.lower()
+                    sql_lower = sql_query.lower()
+                    
+                    is_severity_query = any(word in query_lower for word in ['critical', 'error', 'errors', 'warning', 'info'])
+                    filters_by_event_type_only = 'event_type' in sql_lower and 'severity' not in sql_lower
+                    
+                    if is_severity_query and filters_by_event_type_only:
+                        logger.warning(f"[generate_sql] LLM generated incorrect query - filtered by event_type instead of severity, falling back")
+                        sql_query = _generate_smart_fallback_sql(nl_query, time_range_hours, limit)
+                    else:
+                        logger.info(f"[generate_sql] ✓ Using LLM-generated SQL")
             except (KeyError, TypeError, IndexError) as e:
-                logger.warning(f"Failed to parse AI response, using fallback: {e}")
-                # Generic fallback for any query
-                sql_query = f"SELECT * FROM normalized_events WHERE timestamp > NOW() - INTERVAL '{time_range_hours} hours' ORDER BY timestamp DESC LIMIT {limit}"
+                logger.warning(f"[generate_sql] Failed to parse AI response: {e}, using smart fallback")
+                sql_query = _generate_smart_fallback_sql(nl_query, time_range_hours, limit)
             
             # Basic safety checks
             sql_upper = sql_query.upper()
@@ -231,7 +359,7 @@ SQL Query:"""
                     detail="Generated query must be a SELECT statement"
                 )
             
-            logger.info(f"Generated SQL: {sql_query[:200]}...")
+            logger.info(f"[generate_sql] Final SQL: {sql_query[:200]}...")
             return sql_query
             
     except httpx.RequestError as e:
@@ -256,14 +384,21 @@ async def execute_query(sql_query: str) -> List[Dict[str, Any]]:
         HTTPException: If query execution fails
     """
     try:
-        logger.info(f"Executing SQL: {sql_query}")
+        logger.info(f"[execute_query] Starting SQL execution...")
+        logger.info(f"[execute_query] SQL: {sql_query[:200]}{'...' if len(sql_query) > 200 else ''}")
         pool = await get_pool()
         async with pool.acquire() as conn:
+            logger.info(f"[execute_query] Acquired database connection")
             rows = await conn.fetch(sql_query)
+            logger.info(f"[execute_query] Raw rows returned: {len(rows)}")
             
             # Convert rows to list of dicts
             result = [dict(row) for row in rows]
-            logger.info(f"Query returned {len(result)} rows")
+            logger.info(f"[execute_query] Converted to dicts. Result count: {len(result)}")
+            
+            if result:
+                logger.info(f"[execute_query] First row keys: {list(result[0].keys())}")
+                logger.info(f"[execute_query] First row: {result[0]}")
             
             # Handle datetime serialization
             for row in result:
@@ -271,11 +406,12 @@ async def execute_query(sql_query: str) -> List[Dict[str, Any]]:
                     if isinstance(value, datetime):
                         row[key] = value.isoformat()
             
+            logger.info(f"[execute_query] ✓ Query execution succeeded. Total rows: {len(result)}")
             return result
             
     except Exception as e:
-        logger.error(f"Query execution failed: {e}")
-        logger.error(f"Failed SQL was: {sql_query}")
+        logger.error(f"[execute_query] ✗ Query execution failed: {e}", exc_info=True)
+        logger.error(f"[execute_query] Failed SQL was: {sql_query}")
         raise HTTPException(
             status_code=400,
             detail=f"Query execution error: {str(e)}"
@@ -296,14 +432,30 @@ async def query(request: QueryRequest):
     import time
     start_time = time.time()
     
+    logger.info(f"=== QUERY START ===")
+    logger.info(f"Natural language query: {request.query}")
+    logger.info(f"Limit: {request.limit}, Time range: {request.time_range_hours} hours")
+    
     # Generate SQL from natural language
+    logger.info(f"Generating SQL from natural language...")
     sql_query = await generate_sql(request.query, request.limit, request.time_range_hours)
+    logger.info(f"Generated SQL:\n{sql_query}")
     
     # Execute query
+    logger.info(f"Executing query...")
     rows = await execute_query(sql_query)
+    logger.info(f"✓ Query completed. Rows returned: {len(rows)}")
     
     # Calculate execution time
     execution_time_ms = (time.time() - start_time) * 1000
+    logger.info(f"✓ Total execution time: {execution_time_ms:.1f}ms")
+    
+    if not rows:
+        logger.warning(f"⚠ Query returned 0 rows!")
+    else:
+        logger.info(f"First row sample: {rows[0]}")
+    
+    logger.info(f"=== QUERY END ===\n")
     
     return QueryResponse(
         original_query=request.query,

@@ -434,6 +434,49 @@ body {
   cursor: not-allowed;
 }
 
+.query-history {
+  margin-top: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.history-label {
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: var(--text-label);
+  margin-bottom: 8px;
+}
+
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.history-item {
+  padding: 8px 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.15s;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-item:hover {
+  background: var(--green);
+  color: #0d1117;
+  border-color: var(--green);
+}
+
 .sql-block {
   margin-top: 12px;
   background: var(--bg-card);

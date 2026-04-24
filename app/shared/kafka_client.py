@@ -13,6 +13,8 @@ import json
 import logging
 from typing import Dict, Any, Optional
 from enum import Enum
+from uuid import UUID
+from datetime import datetime
 
 from aiokafka import AIOKafkaProducer
 
@@ -20,6 +22,16 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+
+
+class JSONEncoder(json.JSONEncoder):
+    """Custom JSON encoder for UUID and datetime objects."""
+    def default(self, obj: Any) -> Any:
+        if isinstance(obj, UUID):
+            return str(obj)
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        return super().default(obj)
 
 
 class EventPriority(str, Enum):
@@ -52,7 +64,7 @@ class KafkaClient:
         try:
             self.producer = AIOKafkaProducer(
                 bootstrap_servers=self.bootstrap_servers,
-                value_serializer=lambda v: json.dumps(v).encode('utf-8'),
+                value_serializer=lambda v: json.dumps(v, cls=JSONEncoder).encode('utf-8'),
                 compression_type='gzip'
             )
             await self.producer.start()

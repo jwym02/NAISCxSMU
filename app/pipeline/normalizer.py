@@ -202,7 +202,10 @@ def lookup_rule(record: dict) -> dict | None:
             return {
                 "category":           item.get("category",           {}).get("S"),
                 "recommended_action": item.get("recommended_action", {}).get("S"),
-                "min_confidence":     float(item.get("min_confidence", {}).get("N", 0))
+                "min_confidence":     float(item.get("min_confidence", {}).get("N", 0)),
+                # Human-review feedback boost — written by update_feedback_rule()
+                # in app/shared/dynamo.py; 0.0 when no reviews have been recorded yet
+                "confidence_boost":   float(item.get("confidence_boost", {}).get("N", 0.0)),
             }
     except Exception as e:
         logging.warning(f"DynamoDB rule lookup failed for '{source}': {e}")
@@ -225,6 +228,17 @@ def combine_and_score(record: dict, ai_result: dict, rule: dict | None):
         else:
             # Rule confirms AI — boost confidence
             confidence += 0.15
+
+        # Apply accumulated human-review feedback boost (range [-0.20, +0.20])
+        # Written by update_feedback_rule() in app/shared/dynamo.py each time
+        # a reviewer approves or rejects an event from this source.
+        feedback_boost = float(rule.get("confidence_boost", 0.0))
+        if feedback_boost != 0.0:
+            confidence += feedback_boost
+            logging.debug(
+                "Applied feedback_boost=%.4f for source=%s → confidence now %.3f",
+                feedback_boost, record.get("source"), confidence,
+            )
 
     confidence = max(0.0, min(1.0, confidence))  # clamp to [0, 1]
 

@@ -1,0 +1,686 @@
+/* ── Review Queue overlay styles ─────────────────────────────────────────────
+   These are scoped to the .review-drawer and its children.
+   The drawer hard-resets color/font so the dark app theme doesn't bleed in.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/* ── Review Queue button bar ── */
+.review-queue-bar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 1rem;
+}
+
+.btn-review-queue {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1.1rem;
+  background: #2563eb;
+  color: #fff !important;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+  font-family: "Inter", "Segoe UI", system-ui, sans-serif;
+}
+
+.btn-review-queue:hover {
+  background: #1d4ed8;
+}
+
+/* ── Badge (shared) ── */
+.review-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.35rem;
+  height: 1.35rem;
+  padding: 0 0.3rem;
+  background: #ef4444;
+  color: #fff !important;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* ── Backdrop ── */
+.overlay-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 200;
+}
+
+/* ── Drawer shell ── */
+.review-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 480px;
+  max-width: 95vw;
+  height: 100vh;
+  background: #ffffff;
+  /* Hard-reset: override the dark-theme color/font that body sets globally */
+  color: #111827 !important;
+  font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif !important;
+  font-size: 14px;
+  box-shadow: -4px 0 32px rgba(0, 0, 0, 0.25);
+  z-index: 201;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Propagate the reset to every descendant */
+.review-drawer *,
+.review-drawer *::before,
+.review-drawer *::after {
+  color: inherit;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+/* ── Drawer header ── */
+.review-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid #e5e7eb;
+  background: #f9fafb;
+  color: #111827 !important;
+  flex-shrink: 0;
+}
+
+.review-drawer-title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #111827 !important;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.review-drawer-controls {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.btn-icon {
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  padding: 0.3rem 0.6rem;
+  font-size: 1rem;
+  cursor: pointer;
+  color: #374151 !important;
+  transition: background 0.1s;
+}
+
+.btn-icon:hover {
+  background: #f3f4f6;
+}
+
+/* ── Drawer body ── */
+.review-drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  background: #f3f4f6;
+}
+
+.review-status-msg {
+  text-align: center;
+  color: #6b7280 !important;
+  margin-top: 2rem;
+  font-size: 0.9rem;
+}
+
+.review-error {
+  color: #dc2626 !important;
+}
+
+/* ── ReviewCard ── */
+.review-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: visible !important;
+  background: #ffffff;
+  color: #111827 !important;
+}
+
+.review-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.65rem 0.9rem;
+  background: #f9fafb;
+  border-bottom: 1px solid #e5e7eb;
+  color: #111827 !important;
+}
+
+.review-source {
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: #1f2937 !important;
+  flex: 1;
+}
+
+.review-confidence {
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+/* Severity badges */
+.severity-badge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-family: inherit;
+}
+
+.severity-critical { background: #fef2f2; color: #dc2626 !important; border: 1px solid #fca5a5; }
+.severity-error    { background: #fff7ed; color: #c2410c !important; border: 1px solid #fdba74; }
+.severity-warning  { background: #fefce8; color: #a16207 !important; border: 1px solid #fde047; }
+.severity-info     { background: #eff6ff; color: #1d4ed8 !important; border: 1px solid #93c5fd; }
+.severity-unknown  { background: #f9fafb; color: #6b7280 !important; border: 1px solid #d1d5db; }
+
+/* ── Card body ── */
+.review-card-body {
+  padding: 0.8rem 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  background: #ffffff;
+  color: #111827 !important;
+}
+
+.review-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.review-field label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #6b7280 !important;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.review-text {
+  font-size: 0.84rem;
+  color: #374151 !important;
+  margin: 0;
+  line-height: 1.45;
+}
+
+.review-reason .review-text {
+  color: #b45309 !important;
+}
+
+.review-input {
+  font-size: 0.85rem;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  color: #111827 !important;
+  background: #ffffff;
+  width: 100%;
+  outline: none;
+  font-family: inherit;
+}
+
+.review-input:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+.review-textarea {
+  font-size: 0.84rem;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  resize: vertical;
+  font-family: inherit;
+  color: #111827 !important;
+  background: #ffffff;
+  width: 100%;
+  outline: none;
+}
+
+.review-textarea:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+/* ── Card actions ── */
+.review-card-actions {
+  display: flex;
+  gap: 0.6rem;
+  padding: 0.65rem 0.9rem;
+  border-top: 1px solid #e5e7eb;
+  background: #f9fafb;
+}
+
+.btn-approve,
+.btn-reject {
+  flex: 1;
+  padding: 0.5rem 0;
+  border: none;
+  border-radius: 5px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  font-family: inherit;
+}
+
+.btn-approve          { background: #22c55e; color: #ffffff !important; }
+.btn-approve:hover:not(:disabled) { background: #16a34a; }
+
+.btn-reject           { background: #ef4444; color: #ffffff !important; }
+.btn-reject:hover:not(:disabled)  { background: #dc2626; }
+
+.btn-approve:disabled,
+.btn-reject:disabled  { opacity: 0.45; cursor: not-allowed; }
+
+/* Override: force visible text in review components */
+.review-queue-bar {
+  color: #000000 !important;
+}
+
+.btn-review-queue {
+  color: #000000 !important;
+  background: #2563eb;
+}
+
+.btn-review-queue:hover {
+  background: #1d4ed8;
+  color: #000000 !important;
+}
+
+.review-drawer {
+  color: #000000 !important;
+  background: #ffffff;
+}
+
+.review-drawer-header {
+  color: #000000 !important;
+  background: #f5f5f5;
+}
+
+.review-drawer-title {
+  color: #000000 !important;
+}
+
+.review-drawer-body {
+  color: #000000 !important;
+  background: #ffffff;
+}
+
+.review-status-msg {
+  color: #000000 !important;
+}
+
+.review-error {
+  color: #d32f2f !important;
+}
+
+.review-card {
+  color: #000000 !important;
+  background: #f9f9f9;
+}
+
+.review-card-header {
+  color: #000000 !important;
+  background: #f5f5f5;
+}
+
+.review-card-body {
+  color: #000000 !important;
+  background: #ffffff;
+}
+
+.review-field label {
+  color: #000000 !important;
+}
+
+.review-text {
+  color: #333333 !important;
+}
+
+.review-input {
+  color: #000000 !important;
+  background: #ffffff;
+}
+
+.review-textarea {
+  color: #000000 !important;
+  background: #ffffff;
+}
+
+/* Override: force visible text in review components */
+.review-queue-bar {
+  color: #000000 !important;
+}
+
+.btn-review-queue {
+  color: #000000 !important;
+  background: #2563eb;
+}
+
+.btn-review-queue:hover {
+  background: #1d4ed8;
+  color: #000000 !important;
+}
+
+.review-drawer {
+  color: #000000 !important;
+  background: #ffffff;
+}
+
+.review-drawer-header {
+  color: #000000 !important;
+  background: #f5f5f5;
+}
+
+.review-drawer-title {
+  color: #000000 !important;
+}
+
+.review-drawer-body {
+  color: #000000 !important;
+  background: #ffffff;
+}
+
+.review-status-msg {
+  color: #000000 !important;
+}
+
+.review-error {
+  color: #d32f2f !important;
+}
+
+.review-card {
+  color: #000000 !important;
+  background: #f9f9f9;
+}
+
+.review-card-header {
+  color: #000000 !important;
+  background: #f5f5f5;
+}
+
+.review-card-body {
+  color: #000000 !important;
+  background: #ffffff;
+}
+
+.review-field label {
+  color: #000000 !important;
+}
+
+.review-text {
+  color: #000000 !important;
+}
+
+.review-input {
+  color: #000000 !important;
+  background: #ffffff;
+}
+
+.review-textarea {
+  color: #000000 !important;
+  background: #ffffff;
+}
+
+/* NUCLEAR OPTION - Override everything with universal selector inside drawer */
+.review-drawer-body * {
+  color: #000000 !important;
+  fill: #000000 !important;
+  stroke: #000000 !important;
+}
+
+/* DEBUG: Make cards visually distinct */
+.review-card {
+  background: #ffffff !important;
+  border: 1px solid #ddd !important;
+  min-height: auto !important;
+  display: block !important;
+  margin-bottom: 12px !important;
+  overflow: visible !important;
+}
+
+.review-card-header {
+  background: #f5f5f5 !important;
+  border: none !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 8px !important;
+  padding: 12px !important;
+  border-bottom: 1px solid #ddd !important;
+}
+
+.review-header-top {
+  display: flex !important;
+  align-items: center !important;
+  gap: 12px !important;
+}
+
+.review-header-bottom {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  flex-wrap: wrap !important;
+}
+
+.review-source-label {
+  font-weight: 600 !important;
+  color: #666 !important;
+  font-size: 0.85rem !important;
+}
+
+.review-source {
+  background: #e8e8e8 !important;
+  padding: 4px 8px !important;
+  border-radius: 4px !important;
+  font-size: 0.9rem !important;
+  color: #000 !important;
+  font-family: monospace !important;
+  flex: 1 !important;
+}
+
+.btn-view-file {
+  padding: 6px 12px !important;
+  background: #3b82f6 !important;
+  color: #ffffff !important;
+  border: none !important;
+  border-radius: 4px !important;
+  font-size: 0.85rem !important;
+  font-weight: 600 !important;
+  cursor: pointer !important;
+  transition: background 0.2s !important;
+}
+
+.btn-view-file:hover:not(:disabled) {
+  background: #2563eb !important;
+}
+
+.btn-view-file:disabled {
+  background: #9ca3af !important;
+  cursor: not-allowed !important;
+}
+
+.review-file-data {
+  padding: 12px !important;
+  background: #f0f0f0 !important;
+  border-bottom: 1px solid #ddd !important;
+  overflow-y: auto !important;
+  max-height: none !important;
+}
+
+.review-file-data pre {
+  margin: 0 !important;
+  font-size: 0.75rem !important;
+  color: #000 !important;
+  font-family: "Courier New", monospace !important;
+  white-space: pre-wrap !important;
+  word-break: break-word !important;
+  max-width: 100% !important;
+  overflow-x: auto !important;
+}
+
+.review-card-body {
+  background: #ffffff !important;
+  display: block !important;
+  min-height: 120px !important;
+  padding: 12px !important;
+}
+
+.review-card-actions {
+  display: flex !important;
+  gap: 8px !important;
+  padding: 12px !important;
+  border-top: 1px solid #ddd !important;
+  background: #f5f5f5 !important;
+  min-height: 50px !important;
+}
+
+.review-field {
+  border: none !important;
+  padding: 8px 0 !important;
+  display: block !important;
+  min-height: auto !important;
+  margin-bottom: 8px !important;
+}
+
+.review-text {
+  background: transparent !important;
+  padding: 4px !important;
+  display: block !important;
+  min-height: 20px !important;
+  margin: 4px 0 !important;
+}
+
+.review-input {
+  display: block !important;
+  min-height: 28px !important;
+  width: 100% !important;
+  margin: 4px 0 !important;
+  padding: 6px !important;
+}
+
+.review-textarea {
+  display: block !important;
+  min-height: 60px !important;
+  width: 100% !important;
+  margin: 4px 0 !important;
+  padding: 6px !important;
+}
+
+.btn-approve,
+.btn-reject {
+  flex: 1 !important;
+  padding: 8px 12px !important;
+  font-size: 0.9rem !important;
+  min-height: 36px !important;
+  cursor: pointer !important;
+  border: none !important;
+  border-radius: 4px !important;
+  font-weight: 600 !important;
+  color: #ffffff !important;
+}
+
+.btn-approve {
+  background: #22c55e !important;
+}
+
+.btn-approve:hover:not(:disabled) {
+  background: #16a34a !important;
+}
+
+.btn-reject {
+  background: #ef4444 !important;
+}
+
+.btn-reject:hover:not(:disabled) {
+  background: #dc2626 !important;
+}
+
+/* ── Filter UI ── */
+.review-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  background: #f9f9f9;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  margin-bottom: 16px;
+}
+
+.filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.filter-group label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #333;
+}
+
+.filter-select {
+  padding: 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  color: #000;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.filter-select:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1);
+}
+
+.filter-reset {
+  padding: 8px 12px;
+  background: #6b7280;
+  color: #ffffff;
+  border: none;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.filter-reset:hover {
+  background: #4b5563;
+}
+
+.filter-results {
+  font-size: 0.85rem;
+  color: #666;
+  text-align: center;
+  padding: 8px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 4px;
+  margin-bottom: 12px;
+}

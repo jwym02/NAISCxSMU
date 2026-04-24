@@ -59,91 +59,112 @@ class ProcessResult(BaseModel):
 async def process_log_file(file_data: bytes, file_name: str, file_format: Optional[str] = None) -> ProcessResult:
     """
     Execute the complete pipeline for a log file.
-    
+
     Args:
         file_data: File content as bytes
         file_name: Original filename
         file_format: Optional format hint (JSON, CSV, XML, LOG, etc.)
-    
+
     Returns:
         ProcessResult with pipeline execution details
     """
     job_id = str(uuid4())
     start_time = datetime.now(timezone.utc)
     errors = []
-    
+
     try:
-        logger.info(f"Pipeline START: job_id={job_id}, file={file_name}")
+        logger.info("▶▶▶ [PIPELINE] START  job_id=%s  file=%s  format=%s  bytes=%d",
+                    job_id, file_name, file_format, len(file_data))
         
         # STEP 1: INGEST
-        # Store file in MinIO and check for duplicates
+        # Store file in MinIO and check for duplicates.
+        # ingest_log() returns a plain tuple: (job_id, file_key, is_duplicate)
+        logger.info("▶▶▶ [PIPELINE:1] INGEST starting …")
         try:
-            ingest_result = ingest_log(file_data, file_name, file_format)
-            if ingest_result.get("is_duplicate"):
-                logger.warning(f"Duplicate file detected: {file_name}")
+            _ingest_job_id, minio_key, is_duplicate = await ingest_log(file_data, file_name, file_format)
+            if is_duplicate:
+                logger.warning("▶▶▶ [PIPELINE:1] duplicate file detected: %s", file_name)
                 errors.append("File is duplicate (content already processed)")
 
-            minio_key = ingest_result.get("file_key")
-            logger.info(f"Ingested: {file_name} → MinIO key={minio_key}")
-            
+            logger.info("▶▶▶ [PIPELINE:1] INGEST OK  minio_key=%s  duplicate=%s",
+                        minio_key, is_duplicate)
+
         except Exception as e:
-            logger.error(f"Ingest failed: {e}")
+            logger.exception("▶▶▶ [PIPELINE:1] INGEST FAILED: %s", e)
             errors.append(f"Ingest error: {str(e)}")
             raise
         
         # STEP 2: PARSE
         # Detect format and extract structured records
+        logger.info("▶▶▶ [PIPELINE:2] PARSE starting …")
         try:
             parse_result = parse_log(file_data, file_format)
             detected_format = parse_result.get("detected_format", file_format or "UNKNOWN")
             records = parse_result.get("records", [])
             parse_errors = parse_result.get("parse_errors", [])
-            
+
             if parse_errors:
                 errors.extend([f"Parse warning: {err}" for err in parse_errors[:3]])
-            
-            logger.info(f"Parsed: {len(records)} records from {detected_format} file")
-            
+
+            logger.info("▶▶▶ [PIPELINE:2] PARSE OK  detected_format=%s  records=%d  parse_errors=%d",
+                        detected_format, len(records), len(parse_errors))
+            if not records:
+                logger.warning("▶▶▶ [PIPELINE:2] PARSE returned 0 records — nothing to normalize")
+
         except Exception as e:
-            logger.error(f"Parse failed: {e}")
+            logger.exception("▶▶▶ [PIPELINE:2] PARSE FAILED: %s", e)
             errors.append(f"Parse error: {str(e)}")
             raise
         
         # STEP 3: NORMALIZE
         # AI categorization, severity detection, confidence scoring
+        logger.info("▶▶▶ [PIPELINE:3] NORMALIZE starting on %d record(s) …", len(records))
         try:
             normalize_result = await normalize_log(records)
-            normalized_events = normalize_result.get("normalized_records", [])   # key is "normalized_records"
+            normalized_events = normalize_result.get("normalized_records", [])
             review_queue_items = normalize_result.get("review_queue_items", [])
-            
-            logger.info(f"Normalized: {len(normalized_events)} events, {len(review_queue_items)} need review")
-            
+
+            logger.info("▶▶▶ [PIPELINE:3] NORMALIZE OK  normalized=%d  review_queue=%d",
+                        len(normalized_events), len(review_queue_items))
+            for i, ev in enumerate(normalized_events):
+                ai = ev.get("ai_normalized", {})
+                logger.info(
+                    "▶▶▶ [PIPELINE:3]   event[%d]  source=%s  severity=%s  "
+                    "category=%s  confidence=%.2f  requires_review=%s",
+                    i, ev.get("source"), ev.get("severity"),
+                    ai.get("category"), float(ai.get("confidence", 0)),
+                    ev.get("requires_review"),
+                )
+
         except Exception as e:
-            logger.error(f"Normalize failed: {e}")
+            logger.exception("▶▶▶ [PIPELINE:3] NORMALIZE FAILED: %s", e)
             errors.append(f"Normalize error: {str(e)}")
             raise
         
         # STEP 4: ROUTE
         # Distribute to Kafka topics based on severity
+        logger.info("▶▶▶ [PIPELINE:4] ROUTE starting on %d event(s) …", len(normalized_events))
         try:
             routed_counts = {}
             routing_results = []
-            
+
             for event in normalized_events:
                 route_result = route_event(event, job_id)
-                routing_results.append((event, route_result))  # Store event with routing result
-                
+                routing_results.append((event, route_result))
+
                 topic = route_result.get("topic")
                 if topic:
                     routed_counts[topic] = routed_counts.get(topic, 0) + 1
-            
-            logger.info(f"Routed: P0={routed_counts.get('logs.p0', 0)}, "
-                       f"P1={routed_counts.get('logs.p1', 0)}, "
-                       f"P2={routed_counts.get('logs.p2', 0)}, "
-                       f"Deadletter={routed_counts.get('logs.deadletter', 0)}")
-            
+
+            logger.info(
+                "▶▶▶ [PIPELINE:4] ROUTE OK  p0=%d  p1=%d  p2=%d  dl=%d  review=%d",
+                routed_counts.get("logs.p0", 0), routed_counts.get("logs.p1", 0),
+                routed_counts.get("logs.p2", 0), routed_counts.get("logs.deadletter", 0),
+                len(normalized_events) - sum(routed_counts.values()),
+            )
+
         except Exception as e:
-            logger.error(f"Routing failed: {e}")
+            logger.exception("▶▶▶ [PIPELINE:4] ROUTE FAILED: %s", e)
             errors.append(f"Routing error: {str(e)}")
             raise
         
@@ -176,55 +197,68 @@ async def process_log_file(file_data: bytes, file_name: str, file_format: Option
         
         # STEP 5: PERSIST
         # Save to TimescaleDB for analytics and review
+        logger.info("▶▶▶ [PIPELINE:5] PERSIST starting — job_id=%s  events=%d  review=%d",
+                    job_id, len(normalized_events), len(review_queue_items))
         try:
             now = datetime.now(timezone.utc)
-            
+            ne_ok = 0
+            ne_fail = 0
+
             # Insert normalized events
-            for event in normalized_events:
+            for i, event in enumerate(normalized_events):
                 try:
                     ai = event.get("ai_normalized", {})
-                    await insert_normalized_event(
-                        job_id=job_id,                                      # use pipeline's job_id
+                    ok = await insert_normalized_event(
+                        job_id=job_id,
                         timestamp=now,
                         source=event.get("source", "unknown"),
                         event_type=event.get("event_type", "unknown"),
                         severity=event.get("severity", "INFO"),
                         message=event.get("message", ""),
-                        ai_category=ai.get("category", ""),                 # nested under ai_normalized
+                        ai_category=ai.get("category", ""),
                         ai_root_cause=ai.get("root_cause", ""),
                         ai_recommended_action=ai.get("recommended_action", ""),
                         confidence_score=float(ai.get("confidence", 0.0)),
                         requires_review=event.get("requires_review", False),
-                        review_reason=event.get("review_reason") or ""
+                        review_reason=event.get("review_reason") or "",
                     )
+                    if ok:
+                        ne_ok += 1
+                        logger.info("▶▶▶ [PIPELINE:5]   normalized_events INSERT OK  idx=%d  job_id=%s", i, job_id)
+                    else:
+                        ne_fail += 1
+                        logger.error("▶▶▶ [PIPELINE:5]   normalized_events INSERT FAILED (returned False)  idx=%d  job_id=%s", i, job_id)
                 except Exception as e:
-                    logger.warning(f"Failed to insert event: {e}")
+                    ne_fail += 1
+                    logger.exception("▶▶▶ [PIPELINE:5]   normalized_events INSERT EXCEPTION  idx=%d: %s", i, e)
+
+            logger.info("▶▶▶ [PIPELINE:5] normalized_events done  ok=%d  failed=%d", ne_ok, ne_fail)
 
             # Insert event routing
             for topic, count in routed_counts.items():
                 try:
-                    await insert_event_routing(
-                        job_id=job_id,                                      # use pipeline's job_id
-                        kafka_topic=topic
-                    )
+                    await insert_event_routing(job_id=job_id, kafka_topic=topic)
+                    logger.info("▶▶▶ [PIPELINE:5]   event_routing INSERT OK  topic=%s", topic)
                 except Exception as e:
-                    logger.warning(f"Failed to record routing: {e}")
+                    logger.exception("▶▶▶ [PIPELINE:5]   event_routing INSERT EXCEPTION  topic=%s: %s", topic, e)
 
             # Insert review queue items
-            for review_item in review_queue_items:
+            rq_ok = 0
+            for i, review_item in enumerate(review_queue_items):
                 try:
-                    await insert_review_queue_item(
-                        job_id=job_id                                       # use pipeline's job_id
-                    )
+                    await insert_review_queue_item(job_id=job_id)
+                    rq_ok += 1
+                    logger.info("▶▶▶ [PIPELINE:5]   review_queue INSERT OK  idx=%d  job_id=%s", i, job_id)
                 except Exception as e:
-                    logger.warning(f"Failed to add review item: {e}")
-            
-            logger.info(f"Persisted: {len(normalized_events)} events, {len(review_queue_items)} review items")
-            
+                    logger.exception("▶▶▶ [PIPELINE:5]   review_queue INSERT EXCEPTION  idx=%d: %s", i, e)
+
+            logger.info("▶▶▶ [PIPELINE:5] PERSIST done  ne_ok=%d  ne_fail=%d  rq_ok=%d",
+                        ne_ok, ne_fail, rq_ok)
+
         except Exception as e:
-            logger.error(f"Persistence failed: {e}")
+            logger.exception("▶▶▶ [PIPELINE:5] PERSIST outer EXCEPTION: %s", e)
             errors.append(f"Database error: {str(e)}")
-            # Don't raise - database errors shouldn't block the pipeline
+            # Don't raise — database errors shouldn't block the pipeline
         
         # SUCCESS
         status = "partial_success" if errors else "success"

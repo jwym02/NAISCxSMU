@@ -234,7 +234,16 @@ async def insert_normalized_event(
     review_reason: Optional[str] = None,
 ) -> bool:
     """Insert a normalized event."""
-    pool = await get_pool()
+    logger.info(
+        "▶▶▶ [DB] insert_normalized_event called  job_id=%s  source=%s  severity=%s  "
+        "requires_review=%s  confidence=%.2f",
+        job_id, source, severity, requires_review, confidence_score,
+    )
+    try:
+        pool = await get_pool()
+    except Exception as e:
+        logger.error("▶▶▶ [DB] get_pool() FAILED: %s", e)
+        return False
     try:
         async with pool.acquire() as conn:
             await conn.execute("""
@@ -248,12 +257,12 @@ async def insert_normalized_event(
             """,
             job_id, timestamp, source, event_type, severity, message,
             ai_category, ai_root_cause, ai_recommended_action,
-            confidence_score, requires_review, review_reason
+            confidence_score, requires_review, review_reason,
             )
-        logger.info(f"Inserted normalized event: job_id={job_id}")
+        logger.info("▶▶▶ [DB] insert_normalized_event OK  job_id=%s", job_id)
         return True
     except Exception as e:
-        logger.error(f"Failed to insert normalized event: {e}")
+        logger.error("▶▶▶ [DB] insert_normalized_event FAILED  job_id=%s  error=%s", job_id, e)
         return False
 
 
@@ -395,14 +404,38 @@ async def get_machine_health(
 
 
 async def get_review_queue_pending() -> List[Dict[str, Any]]:
-    """Get all pending review queue items."""
+    """
+    Get all pending review queue items.
+
+    Drives from normalized_events (requires_review = true) so that events
+    needing review are always surfaced even if the review_queue_status row
+    was never inserted.  Events already approved or rejected are excluded.
+    """
     pool = await get_pool()
     try:
         async with pool.acquire() as conn:
             rows = await conn.fetch("""
-                SELECT rqs.*, ne.* FROM review_queue_status rqs
-                JOIN normalized_events ne ON rqs.job_id = ne.job_id
-                WHERE rqs.status = 'pending'
+                SELECT
+                    ne.job_id,
+                    ne.timestamp,
+                    ne.source,
+                    ne.event_type,
+                    ne.severity,
+                    ne.message,
+                    ne.ai_category,
+                    ne.ai_root_cause,
+                    ne.ai_recommended_action,
+                    ne.confidence_score,
+                    ne.requires_review,
+                    ne.review_reason,
+                    ne.created_at,
+                    COALESCE(rqs.status, 'pending')   AS review_status,
+                    rqs.reviewer_notes,
+                    rqs.reviewed_at
+                FROM normalized_events ne
+                LEFT JOIN review_queue_status rqs ON rqs.job_id = ne.job_id
+                WHERE ne.requires_review = true
+                  AND (rqs.status IS NULL OR rqs.status = 'pending')
                 ORDER BY ne.timestamp DESC
             """)
         return [dict(row) for row in rows]
@@ -417,9 +450,15 @@ async def get_event_stats() -> Dict[str, Any]:
     try:
         async with pool.acquire() as conn:
             total = await conn.fetchval("SELECT COUNT(*) FROM normalized_events")
-            in_review = await conn.fetchval(
-                "SELECT COUNT(*) FROM review_queue_status WHERE status = 'pending'"
-            )
+            # Count events that still need human review — same query logic as
+            # get_review_queue_pending() so badge and drawer are always in sync.
+            in_review = await conn.fetchval("""
+                SELECT COUNT(*)
+                FROM normalized_events ne
+                LEFT JOIN review_queue_status rqs ON rqs.job_id = ne.job_id
+                WHERE ne.requires_review = true
+                  AND (rqs.status IS NULL OR rqs.status = 'pending')
+            """)
             # Jobs with no corresponding normalized event (processing failures)
             failures = await conn.fetchval("""
                 SELECT COUNT(*) FROM raw_logs r

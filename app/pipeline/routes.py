@@ -9,8 +9,9 @@ from typing import Optional
 from datetime import datetime, timezone
 import logging
 
-from app.shared.kafka_client import get_kafka_client, EventPriority
 from pydantic import BaseModel
+from app.shared.kafka_client import get_kafka_client
+from app.shared.dynamo import update_feedback_rule
 from app.shared.db import (
     get_review_queue_pending,
     get_event_with_routing,
@@ -19,12 +20,14 @@ from app.shared.db import (
     get_event_stats,
     get_events_timeseries,
 )
-from app.pipeline.ingest import ingest_log
+
+log = logging.getLogger(__name__)
 
 
 class ReviewRequest(BaseModel):
     decision: str
     notes: Optional[str] = None
+    category: Optional[str] = None   # AI-assigned (or corrected) category — used for DynamoDB feedback
 
 
 def _flatten_event(item: dict) -> dict:
@@ -57,30 +60,41 @@ async def upload_log(
     file: UploadFile = File(...),
     file_format: Optional[str] = Form(None),
 ):
-    """Accept a log file, kick off the processing pipeline, return a job_id."""
+    """Accept a log file, run the full processing pipeline, return a job_id."""
+    log.info("▶▶▶ [UPLOAD] handler entered — file=%s  format=%s", file.filename, file_format)
     try:
         contents = await file.read()
-        job_id, file_key, is_duplicate = await ingest_log(contents, file.filename, file_format)
+        log.info("▶▶▶ [UPLOAD] read %d bytes from %s", len(contents), file.filename)
 
-        if is_duplicate:
-            raise HTTPException(status_code=409, detail="Duplicate file")
+        if not contents:
+            log.warning("▶▶▶ [UPLOAD] file is empty — rejecting")
+            raise HTTPException(status_code=400, detail="File is empty")
 
-        kafka_client = await get_kafka_client()
-        if kafka_client:
-            await kafka_client.send_event(
-                EventPriority.P2,
-                {
-                    "job_id": str(job_id),
-                    "file_key": file_key,
-                    "file_name": file.filename,
-                    "file_format": file_format or "unknown",
-                },
-                key=str(job_id),
+        # Lazy import avoids the circular dependency:
+        #   main.py  (imports router from routes.py)  →  routes.py  →  main.py
+        log.info("▶▶▶ [UPLOAD] importing process_log_file …")
+        from app.pipeline.main import process_log_file
+        log.info("▶▶▶ [UPLOAD] calling process_log_file …")
+
+        result = await process_log_file(contents, file.filename, file_format)
+
+        log.info(
+            "▶▶▶ [UPLOAD] process_log_file returned — job_id=%s  status=%s  "
+            "events_processed=%s  errors=%s",
+            result.job_id, result.status, result.events_processed, result.errors,
+        )
+
+        if result.status == "failed":
+            log.error("▶▶▶ [UPLOAD] pipeline FAILED — returning 500")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Processing failed: {result.errors}",
             )
 
+        log.info("▶▶▶ [UPLOAD] returning job_id=%s to client", result.job_id)
         return {
-            "job_id": str(job_id),
-            "status": "processing",
+            "job_id": result.job_id,
+            "status": "accepted",
             "file_name": file.filename,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
@@ -88,7 +102,7 @@ async def upload_log(
     except HTTPException:
         raise
     except Exception as e:
-        logging.error(f"Error uploading log file: {e}")
+        log.exception("▶▶▶ [UPLOAD] unhandled exception: %s", e)
         raise HTTPException(status_code=500, detail="Error uploading log file")
 
 
@@ -180,17 +194,29 @@ async def review_queue_item(job_id: str, review: ReviewRequest):
 
         is_updated = await update_review_status(job_id, review.decision, review.notes)
 
-        if is_updated and review.decision == "approved":
-            event = await get_event_with_routing(job_id)
-            if event:
-                event = _flatten_event(event)
-                severity = event.get("severity", "ERROR").upper()
-                kafka_client = await get_kafka_client()
-                if kafka_client:
-                    if severity == "CRITICAL":
-                        await kafka_client.send_p0_event(event, key=event.get("source", "unknown"))
-                    else:
-                        await kafka_client.send_p1_event(event, key=event.get("source", "unknown"))
+        # ── DynamoDB FEEDBACK LOOP ─────────────────────────────────────────────
+        # Regardless of whether the DB row was updated (idempotent re-reviews are
+        # fine to re-record), persist the human decision back to DynamoDB so that
+        # the normalizer's confidence_boost adjusts on the next pipeline run.
+        event_for_feedback = await get_event_with_routing(job_id)
+        if event_for_feedback:
+            event_for_feedback = _flatten_event(event_for_feedback)
+            source   = event_for_feedback.get("source", "unknown")
+            # Prefer the category sent by the reviewer (corrected label); fall back
+            # to whatever AI assigned when the event was first processed.
+            category = review.category or event_for_feedback.get("ai_category", "unknown")
+            approved = review.decision == "approved"
+            update_feedback_rule(source, category, approved)
+
+        # ── KAFKA FORWARD (approved events only) ──────────────────────────────
+        if is_updated and review.decision == "approved" and event_for_feedback:
+            severity = event_for_feedback.get("severity", "ERROR").upper()
+            kafka_client = await get_kafka_client()
+            if kafka_client:
+                if severity == "CRITICAL":
+                    await kafka_client.send_p0_event(event_for_feedback, key=event_for_feedback.get("source", "unknown"))
+                else:
+                    await kafka_client.send_p1_event(event_for_feedback, key=event_for_feedback.get("source", "unknown"))
 
         return {
             "job_id": job_id,

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<EventLog facility="semiconductor-fab" site="FAB-12" exported="2026-04-21T02:00:00Z">
+
+  <Event>
+    <timestamp>2026-04-21T01:03:11Z</timestamp>
+    <source>tool_PECVD-04</source>
+    <event_type>film_thickness_oos</event_type>
+    <severity>ERROR</severity>
+    <message>TEOS oxide deposition thickness 312 nm vs 400 nm target. Run aborted after step 2.</message>
+    <wafer_lot>LOT-88505</wafer_lot>
+    <target_nm>400</target_nm>
+    <measured_nm>312</measured_nm>
+    <recipe>TEOS-STD-400NM-v3</recipe>
+  </Event>
+</EventLog>

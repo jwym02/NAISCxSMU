@@ -58,6 +58,8 @@ export async function uploadLog(
 export interface ReviewItem {
   job_id: string;
   source: string;
+  event_type: string;
+  message: string;
   severity: string;
   ai_category: string;
   ai_root_cause: string;
@@ -78,6 +80,7 @@ export interface ReviewDecision {
   decision: "approved" | "rejected";
   notes?: string;
   category?: string;           // reviewer-corrected category (fed back to DynamoDB)
+  severity?: string;           // reviewer-corrected severity (used for Kafka routing)
 }
 
 export interface ReviewDecisionResponse {
@@ -96,6 +99,34 @@ export async function fetchReviewQueue(): Promise<ReviewQueueResponse> {
 export async function fetchReviewQueueItem(jobId: string): Promise<ReviewItem & { raw_data?: string }> {
   const res = await fetch(`${BASE}/jobs/${jobId}`);
   if (!res.ok) throw new Error("Failed to fetch review item");
+  return res.json();
+}
+
+export async function fetchRawLog(jobId: string): Promise<{ content: string; truncated: boolean }> {
+  const res = await fetch(`${BASE}/logs/${jobId}/raw`);
+  if (!res.ok) throw new Error("Raw file not available");
+  const truncated = res.headers.get("X-Truncated") === "true";
+  const content = await res.text();
+  return { content, truncated };
+}
+
+export async function fetchCategories(): Promise<string[]> {
+  const res = await fetch(`${BASE}/categories`);
+  if (!res.ok) throw new Error("Failed to fetch categories");
+  const data = await res.json();
+  return data.categories as string[];
+}
+
+export async function addCategory(name: string): Promise<{ name: string; created: boolean }> {
+  const res = await fetch(`${BASE}/categories`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: "Failed to add category" }));
+    throw new Error(err.detail || "Failed to add category");
+  }
   return res.json();
 }
 

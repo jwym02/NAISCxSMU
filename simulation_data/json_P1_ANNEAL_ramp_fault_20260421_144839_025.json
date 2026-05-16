@@ -1,0 +1,14 @@
+[
+  {
+    "timestamp": "2026-04-21T14:48:39Z",
+    "source": "tool_ANNEAL-02",
+    "event_type": "ramp_rate_fault",
+    "severity": "ERROR",
+    "message": "Temperature ramp rate exceeded spec during RTP anneal: 85\u00b0C/s vs max 75\u00b0C/s. Thermal stress risk. Lot held.",
+    "zone": "Anneal Bay",
+    "wafer_lot": "LOT-88592",
+    "max_ramp_cs": 75,
+    "actual_ramp_cs": 85,
+    "recipe": "RTP-NiSi-ANNEAL-v4"
+  }
+]

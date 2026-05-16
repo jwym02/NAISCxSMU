@@ -1,0 +1,45 @@
+[
+  {
+    "timestamp": "2026-04-21T00:02:03Z",
+    "source": "tool_PECVD-01",
+    "event_type": "recipe_loaded",
+    "severity": "INFO",
+    "message": "Recipe OXIDE-STD-500NM-v5 loaded for LOT-88500.",
+    "zone": "Fab Bay 3",
+    "wafer_lot": "LOT-88500"
+  },
+  {
+    "timestamp": "2026-04-21T00:04:02Z",
+    "source": "tool_PECVD-01",
+    "event_type": "preconditioning_started",
+    "severity": "INFO",
+    "message": "Chamber pre-conditioning started. Estimated duration: 15 min.",
+    "zone": "Fab Bay 3"
+  },
+  {
+    "timestamp": "2026-04-21T00:19:30Z",
+    "source": "tool_PECVD-01",
+    "event_type": "preconditioning_complete",
+    "severity": "INFO",
+    "message": "Pre-conditioning complete. Process pressure stabilised at 7.01 mTorr.",
+    "zone": "Fab Bay 3"
+  },
+  {
+    "timestamp": "2026-04-21T00:20:00Z",
+    "source": "tool_PECVD-01",
+    "event_type": "deposition_started",
+    "severity": "INFO",
+    "message": "Deposition started for LOT-88500 (25 wafers, target 500 nm TEOS oxide).",
+    "zone": "Fab Bay 3",
+    "wafer_lot": "LOT-88500"
+  },
+  {
+    "timestamp": "2026-04-21T00:52:18Z",
+    "source": "tool_PECVD-01",
+    "event_type": "deposition_complete",
+    "severity": "INFO",
+    "message": "Deposition complete. Measured thickness 498 nm (spec: 500\u00b110 nm). PASS.",
+    "zone": "Fab Bay 3",
+    "wafer_lot": "LOT-88500"
+  }
+]

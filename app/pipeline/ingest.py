@@ -11,7 +11,7 @@ from app.pipeline.dedup import check_duplicate, DedupResult
 logger = logging.getLogger(__name__)
 
 
-async def ingest_log(file_data: bytes, file_name: str, file_format: str):
+async def ingest_log(file_data: bytes, file_name: str, file_format: str, job_id: str = None):
     """
     Handle the first two steps of the log processing pipeline:
       1. Validate and store the raw file in MinIO.
@@ -21,6 +21,7 @@ async def ingest_log(file_data: bytes, file_name: str, file_format: str):
         file_data:   Raw bytes of the uploaded file.
         file_name:   Original filename (e.g. "machine_001_2024-04-17.log").
         file_format: Format hint (e.g. "json", "csv", "xml", "log").
+        job_id:      Optional caller-supplied UUID; a new one is generated if omitted.
 
     Returns:
         Tuple of (job_id: str, file_key: str, is_duplicate: bool)
@@ -32,7 +33,7 @@ async def ingest_log(file_data: bytes, file_name: str, file_format: str):
     if not file_data:
         raise ValueError("Cannot ingest empty file")
 
-    unique_job_id = str(uuid.uuid4())
+    unique_job_id = job_id or str(uuid.uuid4())
     raw_file_key  = f"raw_logs/{unique_job_id}/{file_name}"
 
     # ── Step 1: Upload to MinIO ────────────────────────────────────────────────

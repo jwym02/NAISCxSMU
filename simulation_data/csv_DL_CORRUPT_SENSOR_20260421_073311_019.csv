@@ -1,0 +1,4 @@
+timestamp,source,event_type,severity,message,zone,wafer_lot,value,unit
+2026-04-21T07:33:11Z,SENSOR_NODE_UNKNOWN,UNDEFINED,???,,,,NaN,unknown
+CORRUPT_LINE|||||0xFF|0x00|overflow
+2026-04-21T07:34:00Z,SENSOR_NODE_UNKNOWN,UNDEFINED,error,unstructured telemetry burst,,,-999.0,unknown

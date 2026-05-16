@@ -1,0 +1,28 @@
+[
+  {
+    "timestamp": "2026-04-21T16:12:33Z",
+    "source": "tool_PECVD-03",
+    "event_type": "fire_alarm",
+    "severity": "CRITICAL",
+    "message": "Smoke detected in PECVD-03 exhaust manifold. Halon system pre-armed. Auto-shutoff engaged.",
+    "zone": "Fab Bay 3",
+    "wafer_lot": "LOT-88603"
+  },
+  {
+    "timestamp": "2026-04-21T16:12:41Z",
+    "source": "tool_PECVD-03",
+    "event_type": "gas_leak",
+    "severity": "CRITICAL",
+    "message": "N2O concentration rising in exhaust duct (800 ppm). Exceeded 500 ppm alarm threshold.",
+    "zone": "Fab Bay 3",
+    "sensor_ppm": 820
+  },
+  {
+    "timestamp": "2026-04-21T16:13:05Z",
+    "source": "machine_GAS-PANEL-03",
+    "event_type": "isolation_valve_closed",
+    "severity": "CRITICAL",
+    "message": "N2O and SiH4 isolation valves closed. Gas supply isolated to PECVD-03.",
+    "zone": "Gas Cabinet C"
+  }
+]

@@ -6,7 +6,9 @@ import { SummaryPanel } from "../components/SummaryPanel";
 import {
   fetchStats,
   fetchReviewQueue,
-  fetchReviewQueueItem,
+  fetchRawLog,
+  fetchCategories,
+  addCategory,
   submitReview,
   Stats,
   ReviewItem,
@@ -14,59 +16,85 @@ import {
 
 // ── ReviewCard ────────────────────────────────────────────────────────────────
 
+const SEVERITY_OPTIONS = ["critical", "error", "warning", "info"] as const;
+type SeverityLevel = typeof SEVERITY_OPTIONS[number];
+
 interface ReviewCardProps {
   item: ReviewItem;
-  onDecision: (jobId: string, decision: "approved" | "rejected", notes: string, category: string) => void;
+  categories: string[];
+  onDecision: (jobId: string, decision: "approved" | "rejected", notes: string, category: string, severity: string) => void;
+  onCategoryAdded: (name: string) => void;
   disabled: boolean;
 }
 
-function ReviewCard({ item, onDecision, disabled }: ReviewCardProps) {
-  const [notes, setNotes]       = useState("");
-  const [category, setCategory] = useState(item.ai_category || "");
-  const [showData, setShowData] = useState(false);
-  const [fileData, setFileData] = useState<string | null>(null);
-  const [loadingFile, setLoadingFile] = useState(false);
-  const [fileName, setFileName] = useState<string | null>(null);
-
-  // Fetch file name on mount
-  useEffect(() => {
-    const fetchFileName = async () => {
-      try {
-        const data = await fetchReviewQueueItem(item.job_id);
-        // Try to extract file name from the event data
-        if (data && typeof data === 'object') {
-          const name = (data as any).file_name || 
-                       (data as any).original_file_name || 
-                       (data as any).filename;
-          if (name) {
-            setFileName(name);
-          }
-        }
-      } catch (err) {
-        console.error("Failed to fetch file name", err);
-      }
-    };
-    
-    fetchFileName();
-  }, [item.job_id]);
+function ReviewCard({ item, categories, onDecision, onCategoryAdded, disabled }: ReviewCardProps) {
+  const [notes, setNotes]                   = useState("");
+  const [category, setCategory]             = useState(item.ai_category || "unknown");
+  const [severity, setSeverity]             = useState<SeverityLevel>(
+    (item.severity?.toLowerCase() as SeverityLevel) || "info"
+  );
+  const [showRaw, setShowRaw]               = useState(false);
+  const [rawFile, setRawFile]               = useState<{ content: string; truncated: boolean } | null>(null);
+  const [loadingRaw, setLoadingRaw]         = useState(false);
+  const [rawError, setRawError]             = useState<string | null>(null);
+  const [addingNew, setAddingNew]           = useState(false);
+  const [newCatName, setNewCatName]         = useState("");
+  const [addingError, setAddingError]       = useState<string | null>(null);
+  const [confirmingForward, setConfirmingForward] = useState(false);
 
   const confidencePct = Math.round((item.confidence_score ?? 0) * 100);
   const confidenceColor =
     confidencePct >= 70 ? "#22c55e" :
     confidencePct >= 40 ? "#f59e0b" : "#ef4444";
 
-  const handleViewFile = async () => {
-    setShowData(!showData);
-    if (!showData && !fileData) {
-      setLoadingFile(true);
-      try {
-        const data = await fetchReviewQueueItem(item.job_id);
-        setFileData(JSON.stringify(data, null, 2));
-      } catch (err) {
-        setFileData("Error loading file data");
-      } finally {
-        setLoadingFile(false);
-      }
+  const isCritical = severity === "critical";
+  const canRoute = category && category !== "unknown";
+
+  const handleToggleRaw = async () => {
+    if (showRaw) { setShowRaw(false); return; }
+    setShowRaw(true);
+    if (rawFile) return;
+    setLoadingRaw(true);
+    setRawError(null);
+    try {
+      const data = await fetchRawLog(item.job_id);
+      setRawFile(data);
+    } catch {
+      setRawError("Could not load raw file from storage.");
+    } finally {
+      setLoadingRaw(false);
+    }
+  };
+
+  const handleSelectChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const val = e.target.value;
+    if (val === "__new__") {
+      setAddingNew(true);
+      setNewCatName("");
+      setAddingError(null);
+    } else {
+      setCategory(val);
+    }
+  };
+
+  const handleSaveNewCategory = async () => {
+    const trimmed = newCatName.trim().toLowerCase();
+    if (!trimmed) return;
+    try {
+      await addCategory(trimmed);
+      onCategoryAdded(trimmed);
+      setCategory(trimmed);
+      setAddingNew(false);
+    } catch (e: unknown) {
+      setAddingError(e instanceof Error ? e.message : "Invalid category name");
+    }
+  };
+
+  const handleRouteClick = () => {
+    if (isCritical) {
+      setConfirmingForward(true);
+    } else {
+      onDecision(item.job_id, "approved", notes, category, severity);
     }
   };
 
@@ -74,32 +102,94 @@ function ReviewCard({ item, onDecision, disabled }: ReviewCardProps) {
     <div className="review-card">
       <div className="review-card-header">
         <div className="review-header-top">
-          <span className={`severity-badge severity-${(item.severity ?? "unknown").toLowerCase()}`}>
-            {item.severity ?? "UNKNOWN"}
-          </span>
+          <select
+            className={`severity-select severity-select-${severity}`}
+            value={severity}
+            onChange={(e) => setSeverity(e.target.value as SeverityLevel)}
+            disabled={disabled}
+            title="Set severity (your choice overrides the AI)"
+          >
+            {SEVERITY_OPTIONS.map((s) => (
+              <option key={s} value={s}>{s.toUpperCase()}</option>
+            ))}
+          </select>
+          {severity !== (item.severity?.toLowerCase() ?? "info") && (
+            <span className="severity-changed-hint">↑ changed by reviewer</span>
+          )}
           <span className="review-confidence" style={{ color: confidenceColor }}>
             {confidencePct}% confidence
           </span>
         </div>
         <div className="review-header-bottom">
-          <span className="review-source-label">File:</span>
-          <span className="review-source">{fileName || item.source}</span>
-          <button className="btn-view-file" onClick={handleViewFile} disabled={loadingFile}>
-            {showData ? "Hide" : "View"} File
+          <span className="review-source-label">Source:</span>
+          <span className="review-source">{item.source}</span>
+          <button className="btn-view-file" onClick={handleToggleRaw} disabled={loadingRaw}>
+            {showRaw ? "Hide" : "View"} Raw File
           </button>
         </div>
       </div>
 
       <div className="review-card-body">
+        {/* Event details — most important for human decision-making */}
+        <div className="review-field review-event-message">
+          <label>Event</label>
+          <p className="review-text review-message">{item.message || "—"}</p>
+        </div>
+        <div className="review-meta-row">
+          <span className="review-meta-item">
+            <span className="review-meta-label">Type</span>
+            <span className="review-meta-value">{item.event_type || "unknown"}</span>
+          </span>
+          <span className="review-meta-item">
+            <span className="review-meta-label">Time</span>
+            <span className="review-meta-value">
+              {item.timestamp ? new Date(item.timestamp).toLocaleString() : "—"}
+            </span>
+          </span>
+          <span className="review-meta-item">
+            <span className="review-meta-label">Flagged</span>
+            <span className="review-meta-value">{item.review_reason || "Low confidence"}</span>
+          </span>
+        </div>
+
+        <div className="review-divider" />
+
+        {/* AI analysis */}
         <div className="review-field">
-          <label>Category</label>
-          <input
-            className="review-input"
-            value={category}
-            onChange={(e) => setCategory(e.target.value)}
-            placeholder="e.g. thermal, mechanical…"
-            disabled={disabled}
-          />
+          <label>
+            Category
+            {!canRoute && <span className="review-label-hint"> — select one to enable routing</span>}
+          </label>
+          {addingNew ? (
+            <div className="review-category-add">
+              <input
+                className="review-input"
+                value={newCatName}
+                onChange={(e) => setNewCatName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") handleSaveNewCategory(); if (e.key === "Escape") setAddingNew(false); }}
+                placeholder="new_category_name"
+                autoFocus
+              />
+              <button className="btn-category-save" onClick={handleSaveNewCategory}>Save</button>
+              <button className="btn-category-cancel" onClick={() => setAddingNew(false)}>Cancel</button>
+              {addingError && <span className="review-add-error">{addingError}</span>}
+            </div>
+          ) : (
+            <select
+              className="review-select"
+              value={category}
+              onChange={handleSelectChange}
+              disabled={disabled}
+            >
+              {categories.map((c) => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+              {!categories.includes(category) && category && (
+                <option value={category}>{category}</option>
+              )}
+              <option value="__new__">+ Add new category…</option>
+            </select>
+          )}
         </div>
         <div className="review-field">
           <label>Root cause</label>
@@ -109,12 +199,6 @@ function ReviewCard({ item, onDecision, disabled }: ReviewCardProps) {
           <label>Recommended action</label>
           <p className="review-text">{item.ai_recommended_action || "—"}</p>
         </div>
-        {item.review_reason && (
-          <div className="review-field review-reason">
-            <label>Flagged because</label>
-            <p className="review-text">{item.review_reason}</p>
-          </div>
-        )}
         <div className="review-field">
           <label>Notes (optional)</label>
           <textarea
@@ -128,30 +212,52 @@ function ReviewCard({ item, onDecision, disabled }: ReviewCardProps) {
         </div>
       </div>
 
-      {showData && (
+      {showRaw && (
         <div className="review-file-data">
-          {loadingFile ? (
-            <p>Loading file data...</p>
-          ) : fileData ? (
-            <pre>{fileData}</pre>
-          ) : null}
+          {loadingRaw && <p className="review-file-loading">Loading raw file…</p>}
+          {rawError && <p className="review-file-error">{rawError}</p>}
+          {rawFile && (
+            <>
+              {rawFile.truncated && (
+                <p className="review-file-truncated">Showing first 500 KB — file truncated</p>
+              )}
+              <pre>{rawFile.content}</pre>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* CRITICAL forward confirmation strip */}
+      {confirmingForward && (
+        <div className="review-confirm-strip">
+          <span>Forward this CRITICAL event to the live pipeline?</span>
+          <button
+            className="btn-confirm-forward"
+            onClick={() => { setConfirmingForward(false); onDecision(item.job_id, "approved", notes, category, severity); }}
+          >
+            Yes, Forward
+          </button>
+          <button className="btn-confirm-cancel" onClick={() => setConfirmingForward(false)}>
+            Cancel
+          </button>
         </div>
       )}
 
       <div className="review-card-actions">
         <button
           className="btn-approve"
-          disabled={disabled}
-          onClick={() => onDecision(item.job_id, "approved", notes, category)}
+          disabled={disabled || !canRoute || confirmingForward}
+          onClick={handleRouteClick}
+          title={!canRoute ? "Select a category before routing" : undefined}
         >
-          ✓ Approve
+          ↑ Route to Pipeline
         </button>
         <button
           className="btn-reject"
-          disabled={disabled}
-          onClick={() => onDecision(item.job_id, "rejected", notes, category)}
+          disabled={disabled || confirmingForward}
+          onClick={() => onDecision(item.job_id, "rejected", notes, category, severity)}
         >
-          ✗ Reject
+          — Dismiss
         </button>
       </div>
     </div>
@@ -173,13 +279,15 @@ function ReviewQueueOverlay({ onClose, onReviewed }: ReviewQueueOverlayProps) {
   const [resolved,   setResolved]   = useState<Set<string>>(new Set());
   const [filterSeverity, setFilterSeverity] = useState<string>("all");
   const [filterSource, setFilterSource] = useState<string>("all");
+  const [categories, setCategories] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchReviewQueue();
-      setItems(data.items);
+      const [queueData, cats] = await Promise.all([fetchReviewQueue(), fetchCategories()]);
+      setItems(queueData.items);
+      setCategories(cats);
     } catch (err) {
       setError("Could not load review queue");
     } finally {
@@ -194,10 +302,11 @@ function ReviewQueueOverlay({ onClose, onReviewed }: ReviewQueueOverlayProps) {
     decision: "approved" | "rejected",
     notes: string,
     category: string,
+    severity: string,
   ) => {
     setSubmitting((prev) => new Set(prev).add(jobId));
     try {
-      await submitReview(jobId, { decision, notes, category });
+      await submitReview(jobId, { decision, notes, category, severity });
       setResolved((prev) => new Set(prev).add(jobId));
       onReviewed();  // refresh dashboard stats
     } catch (e: unknown) {
@@ -311,7 +420,9 @@ function ReviewQueueOverlay({ onClose, onReviewed }: ReviewQueueOverlayProps) {
               <ReviewCard
                 key={item.job_id}
                 item={item}
+                categories={categories}
                 onDecision={handleDecision}
+                onCategoryAdded={(name) => setCategories((prev) => [...prev, name].sort())}
                 disabled={submitting.has(item.job_id)}
               />
             ) : null

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<EventLog facility="semiconductor-fab" site="FAB-12" exported="2026-04-21T18:00:00Z">
+
+  <Event>
+    <timestamp>2026-04-21T17:22:05Z</timestamp>
+    <source>machine_GAS-PANEL-01</source>
+    <event_type>mass_flow_warning</event_type>
+    <severity>WARNING</severity>
+    <message>N2O MFC flow deviation: commanded 500 sccm, measured 471 sccm. MFC recalibration required.</message>
+    <zone>Gas Cabinet A</zone>
+    <commanded_sccm>500</commanded_sccm>
+    <measured_sccm>471</measured_sccm>
+  </Event>
+</EventLog>

@@ -1,0 +1,21 @@
+[
+  {
+    "timestamp": "2026-04-21T03:47:19Z",
+    "source": "tool_ETCH-03",
+    "event_type": "arc_fault",
+    "severity": "CRITICAL",
+    "message": "RF arc detected in process chamber \u2014 plasma discharge abnormal. Recipe aborted.",
+    "zone": "Etch Bay 1",
+    "wafer_lot": "LOT-88528",
+    "rf_power_w": 1420,
+    "dc_bias_v": -310
+  },
+  {
+    "timestamp": "2026-04-21T03:47:45Z",
+    "source": "tool_ETCH-03",
+    "event_type": "chamber_vent",
+    "severity": "CRITICAL",
+    "message": "ETCH-03 chamber vented after arc fault. RF generator powered down for inspection.",
+    "zone": "Etch Bay 1"
+  }
+]

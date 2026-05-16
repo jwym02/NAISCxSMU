@@ -1,0 +1,4 @@
+timestamp,source,event_type,severity,message,zone,wafer_lot,value,unit,setpoint,limit_low,limit_high
+2026-04-21T00:30:05Z,tool_ETCH-03,temperature_reading,INFO,ESC temperature nominal at process start,Etch Bay 1,LOT-88503,50.1,degC,55.0,40.0,60.0
+2026-04-21T00:35:00Z,tool_ETCH-03,temperature_reading,WARNING,ESC temperature elevated,Etch Bay 1,LOT-88503,62.3,degC,55.0,40.0,60.0
+2026-04-21T00:40:00Z,tool_ETCH-03,temperature_reading,CRITICAL,ESC temperature critically high — chuck failure risk,Etch Bay 1,LOT-88503,74.1,degC,55.0,40.0,60.0

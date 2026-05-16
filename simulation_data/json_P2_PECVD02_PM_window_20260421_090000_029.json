@@ -1,0 +1,26 @@
+[
+  {
+    "timestamp": "2026-04-21T09:00:00Z",
+    "source": "machine_MES-SERVER-01",
+    "event_type": "pm_started",
+    "severity": "INFO",
+    "message": "Preventive maintenance window started for tool_PECVD-02. Estimated: 4 hours. 3 lots re-routed.",
+    "zone": "MES"
+  },
+  {
+    "timestamp": "2026-04-21T09:05:12Z",
+    "source": "tool_PECVD-02",
+    "event_type": "pump_down_complete",
+    "severity": "INFO",
+    "message": "Pump-down sequence complete post-PM. Base pressure 5.2e-7 Torr. Proceeding to chamber seasoning.",
+    "zone": "Fab Bay 3"
+  },
+  {
+    "timestamp": "2026-04-21T16:30:00Z",
+    "source": "tool_PECVD-02",
+    "event_type": "pm_complete",
+    "severity": "INFO",
+    "message": "PM complete. Chamber seasoning finished (50 dummy wafer cycles). Tool qualified and returned to production.",
+    "zone": "Fab Bay 3"
+  }
+]

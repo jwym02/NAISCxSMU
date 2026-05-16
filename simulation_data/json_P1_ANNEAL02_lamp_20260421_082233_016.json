@@ -1,0 +1,20 @@
+[
+  {
+    "timestamp": "2026-04-21T08:22:33Z",
+    "source": "tool_ANNEAL-02",
+    "event_type": "lamp_failure",
+    "severity": "ERROR",
+    "message": "RTP lamp bank C output 18% below target during ramp. Possible lamp failure in positions C3, C4. Recipe paused.",
+    "zone": "Anneal Bay",
+    "wafer_lot": "LOT-88553"
+  },
+  {
+    "timestamp": "2026-04-21T08:23:00Z",
+    "source": "tool_ANNEAL-02",
+    "event_type": "temperature_uniformity",
+    "severity": "ERROR",
+    "message": "Temperature uniformity sigma: 4.8\u00b0C (spec: \u22642.0\u00b0C). LOT-88553 quarantined pending lamp replacement.",
+    "zone": "Anneal Bay",
+    "wafer_lot": "LOT-88553"
+  }
+]

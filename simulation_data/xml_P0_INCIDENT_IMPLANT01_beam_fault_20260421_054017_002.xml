@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<EventLog facility="semiconductor-fab" site="FAB-12" exported="2026-04-21T06:00:00Z">
+
+  <Event>
+    <timestamp>2026-04-21T05:40:17Z</timestamp>
+    <source>tool_IMPLANT-01</source>
+    <event_type>beam_current_fault</event_type>
+    <severity>CRITICAL</severity>
+    <message>Ion beam current dropped to zero during boron implant. Source filament failure. Lot quarantined.</message>
+    <wafer_lot>LOT-88541</wafer_lot>
+    <recipe>BORON-BODY-IMPLANT-v2</recipe>
+    <beam_current_ma>0.0</beam_current_ma>
+    <expected_ma>14.5</expected_ma>
+  </Event>
+  <Event>
+    <timestamp>2026-04-21T05:40:30Z</timestamp>
+    <source>machine_MES-SERVER-01</source>
+    <event_type>lot_quarantine</event_type>
+    <severity>CRITICAL</severity>
+    <message>LOT-88541 quarantined. 25 wafers at implant dose risk. Engineering team paged.</message>
+    <wafer_lot>LOT-88541</wafer_lot>
+  </Event>
+</EventLog>

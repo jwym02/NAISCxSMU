@@ -1,0 +1,28 @@
+[
+  {
+    "timestamp": "2026-04-21T03:10:22Z",
+    "source": "machine_WET-BENCH-03",
+    "event_type": "bath_temp_warning",
+    "severity": "WARNING",
+    "message": "SC1 bath temperature 78.2\u00b0C \u2014 3\u00b0C above setpoint. Heater controller PID tuning may be required.",
+    "zone": "Wet Clean Bay"
+  },
+  {
+    "timestamp": "2026-04-21T03:11:00Z",
+    "source": "machine_WET-BENCH-03",
+    "event_type": "lot_hold",
+    "severity": "INFO",
+    "message": "LOT-88519 load held pending SC1 temperature stabilisation.",
+    "zone": "Wet Clean Bay",
+    "wafer_lot": "LOT-88519"
+  },
+  {
+    "timestamp": "2026-04-21T03:15:55Z",
+    "source": "machine_WET-BENCH-03",
+    "event_type": "bath_temp_ok",
+    "severity": "INFO",
+    "message": "SC1 temperature back within spec (75.1\u00b0C). LOT-88519 load resumed.",
+    "zone": "Wet Clean Bay",
+    "wafer_lot": "LOT-88519"
+  }
+]

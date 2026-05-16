@@ -1,0 +1,24 @@
+[
+  {
+    "timestamp": "2026-04-21T00:30:05Z",
+    "source": "tool_ETCH-03",
+    "event_type": "temperature_reading",
+    "severity": "WARNING",
+    "message": "Electrostatic chuck temperature elevated: 62.3\u00b0C (setpoint: 55\u00b0C, limit: 60\u00b0C).",
+    "zone": "Etch Bay 1",
+    "wafer_lot": "LOT-88503",
+    "actual_c": 62.3,
+    "setpoint_c": 55.0
+  },
+  {
+    "timestamp": "2026-04-21T00:35:11Z",
+    "source": "tool_ETCH-03",
+    "event_type": "temperature_reading",
+    "severity": "ERROR",
+    "message": "ESC temperature critically high 71.8\u00b0C \u2014 chuck failure risk. Recipe paused.",
+    "zone": "Etch Bay 1",
+    "wafer_lot": "LOT-88503",
+    "actual_c": 71.8,
+    "setpoint_c": 55.0
+  }
+]

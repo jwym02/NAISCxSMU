@@ -36,7 +36,7 @@ COMMENT ON EXTENSION timescaledb IS 'Enables scalable inserts and complex querie
 -- Name: log_format_type; Type: TYPE; Schema: public; Owner: logparser
 --
 
-CREATE TYPE public.log_format_type AS ENUM (
+DO $$ BEGIN CREATE TYPE public.log_format_type AS ENUM (
     'JSON',
     'XML',
     'CSV',
@@ -45,7 +45,7 @@ CREATE TYPE public.log_format_type AS ENUM (
     'TEXT',
     'BINARY',
     'UNKNOWN'
-);
+); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 
 ALTER TYPE public.log_format_type OWNER TO logparser;
@@ -54,11 +54,11 @@ ALTER TYPE public.log_format_type OWNER TO logparser;
 -- Name: path_type; Type: TYPE; Schema: public; Owner: logparser
 --
 
-CREATE TYPE public.path_type AS ENUM (
+DO $$ BEGIN CREATE TYPE public.path_type AS ENUM (
     'HOT',
     'COLD',
     'DEADLETTER'
-);
+); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 
 ALTER TYPE public.path_type OWNER TO logparser;
@@ -67,13 +67,13 @@ ALTER TYPE public.path_type OWNER TO logparser;
 -- Name: severity_level; Type: TYPE; Schema: public; Owner: logparser
 --
 
-CREATE TYPE public.severity_level AS ENUM (
+DO $$ BEGIN CREATE TYPE public.severity_level AS ENUM (
     'CRITICAL',
     'ERROR',
     'WARN',
     'INFO',
     'DEBUG'
-);
+); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 
 ALTER TYPE public.severity_level OWNER TO logparser;
@@ -82,12 +82,12 @@ ALTER TYPE public.severity_level OWNER TO logparser;
 -- Name: urgency_priority; Type: TYPE; Schema: public; Owner: logparser
 --
 
-CREATE TYPE public.urgency_priority AS ENUM (
+DO $$ BEGIN CREATE TYPE public.urgency_priority AS ENUM (
     'P0',
     'P1',
     'P2',
     'DEADLETTER'
-);
+); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 
 ALTER TYPE public.urgency_priority OWNER TO logparser;

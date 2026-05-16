@@ -1,0 +1,6 @@
+timestamp,source,event_type,severity,message,zone,wafer_lot,value,unit,setpoint,limit_low,limit_high
+2026-04-21T06:02:00Z,tool_DIFFUSION-02,temperature_reading,INFO,Furnace zone 1 within spec,Diffusion Bay,LOT-88545,900.2,degC,900.0,895.0,905.0
+2026-04-21T06:02:10Z,tool_DIFFUSION-02,temperature_reading,INFO,Furnace zone 2 within spec,Diffusion Bay,LOT-88545,899.8,degC,900.0,895.0,905.0
+2026-04-21T06:02:20Z,tool_DIFFUSION-02,temperature_reading,INFO,Furnace zone 3 within spec,Diffusion Bay,LOT-88545,900.5,degC,900.0,895.0,905.0
+2026-04-21T06:02:30Z,tool_DIFFUSION-02,temperature_reading,INFO,Furnace zone 4 within spec,Diffusion Bay,LOT-88545,900.1,degC,900.0,895.0,905.0
+2026-04-21T06:02:40Z,tool_DIFFUSION-02,temperature_reading,INFO,Furnace zone 5 within spec,Diffusion Bay,LOT-88545,899.9,degC,900.0,895.0,905.0

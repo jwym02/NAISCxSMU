@@ -1,0 +1,4 @@
+timestamp,source,event_type,severity,message,zone,wafer_lot,value,unit,setpoint,limit_low,limit_high
+2026-04-21T09:00:00Z,device_CHILLER-CVD-01,coolant_temp_reading,INFO,CVD chiller outlet temperature nominal,Fab Bay 2,,20.1,degC,20.0,19.0,21.0
+2026-04-21T09:30:00Z,device_CHILLER-CVD-01,coolant_temp_reading,INFO,CVD chiller outlet temperature stable,Fab Bay 2,,20.0,degC,20.0,19.0,21.0
+2026-04-21T10:00:00Z,device_CHILLER-CVD-01,coolant_flow_reading,INFO,Coolant flow nominal,Fab Bay 2,,4.4,L/min,4.5,4.0,5.0

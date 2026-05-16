@@ -24,6 +24,7 @@ import logging
 import asyncio
 from typing import Set
 from datetime import datetime, timezone
+from uuid import uuid4
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from aiokafka import AIOKafkaConsumer
@@ -96,7 +97,7 @@ async def process_event(topic: str, event: dict):
     """
     try:
         # Extract event details
-        job_id = event.get("job_id", "unknown")
+        job_id = event.get("job_id") or str(uuid4())
         timestamp_str = event.get("timestamp", datetime.now(timezone.utc).isoformat())
         source = event.get("source", "unknown")
         severity = event.get("severity", "ERROR")

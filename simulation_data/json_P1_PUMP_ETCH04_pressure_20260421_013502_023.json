@@ -1,0 +1,26 @@
+[
+  {
+    "timestamp": "2026-04-21T01:05:33Z",
+    "source": "device_PUMP-ETCH-04",
+    "event_type": "pressure_rising",
+    "severity": "WARNING",
+    "message": "Exhaust pump inlet pressure rising: 2.1 Torr (baseline: 0.8 Torr). Possible partial blockage.",
+    "zone": "Etch Bay 1"
+  },
+  {
+    "timestamp": "2026-04-21T01:18:44Z",
+    "source": "device_PUMP-ETCH-04",
+    "event_type": "pressure_rising",
+    "severity": "WARNING",
+    "message": "Inlet pressure still elevated: 2.4 Torr. Possible partial blockage in foreline. Tool standby.",
+    "zone": "Etch Bay 1"
+  },
+  {
+    "timestamp": "2026-04-21T01:35:02Z",
+    "source": "device_PUMP-ETCH-04",
+    "event_type": "interlock_trip",
+    "severity": "ERROR",
+    "message": "Inlet pressure reached 3.8 Torr \u2014 interlock tripped. ETCH-04 taken offline. Maintenance notified.",
+    "zone": "Etch Bay 1"
+  }
+]

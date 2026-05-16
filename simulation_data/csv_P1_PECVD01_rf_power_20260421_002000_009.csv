@@ -1,0 +1,4 @@
+timestamp,source,event_type,severity,message,zone,wafer_lot,value,unit,setpoint,limit_low,limit_high
+2026-04-21T00:15:00Z,tool_PECVD-01,rf_power_reading,INFO,RF power delivery nominal,Fab Bay 3,LOT-88500,299.8,W,300.0,290.0,310.0
+2026-04-21T00:25:00Z,tool_PECVD-01,rf_power_reading,WARNING,RF power slightly below lower limit,Fab Bay 3,LOT-88500,285.1,W,300.0,290.0,310.0
+2026-04-21T00:30:00Z,tool_PECVD-01,rf_power_reading,ERROR,RF power critically low — plasma may not be sustained,Fab Bay 3,LOT-88500,261.4,W,300.0,290.0,310.0

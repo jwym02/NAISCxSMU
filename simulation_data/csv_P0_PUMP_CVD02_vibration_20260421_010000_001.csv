@@ -1,0 +1,4 @@
+timestamp,source,event_type,severity,message,zone,wafer_lot,value,unit,setpoint,limit_low,limit_high
+2026-04-21T01:00:00Z,device_PUMP-CVD-02,vibration_reading,INFO,Dry pump vibration within normal range,Fab Bay 2,,1.2,mm/s,,,3.5
+2026-04-21T01:05:00Z,device_PUMP-CVD-02,vibration_reading,WARNING,Dry pump vibration increasing — bearing wear possible,Fab Bay 2,,2.9,mm/s,,,3.5
+2026-04-21T01:10:00Z,device_PUMP-CVD-02,vibration_reading,CRITICAL,Dry pump vibration exceeded limit — emergency shutoff,Fab Bay 2,,4.1,mm/s,,,3.5

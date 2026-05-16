@@ -1,0 +1,28 @@
+[
+  {
+    "timestamp": "2026-04-21T02:01:45Z",
+    "source": "tool_LITHO-SCANNER-03",
+    "event_type": "reticle_qualified",
+    "severity": "INFO",
+    "message": "Reticle WL-POLY-GATE-R11 loaded and qualified. Alignment marks verified OK.",
+    "zone": "Lithography Bay"
+  },
+  {
+    "timestamp": "2026-04-21T02:03:00Z",
+    "source": "tool_LITHO-SCANNER-03",
+    "event_type": "exposure_started",
+    "severity": "INFO",
+    "message": "Exposure sequence started for LOT-88513 (25 wafers, M1 poly gate layer).",
+    "zone": "Lithography Bay",
+    "wafer_lot": "LOT-88513"
+  },
+  {
+    "timestamp": "2026-04-21T02:44:10Z",
+    "source": "tool_LITHO-SCANNER-03",
+    "event_type": "exposure_complete",
+    "severity": "INFO",
+    "message": "Exposure complete. 25 wafers passed inline CD check (target 45 nm \u00b13 nm, mean 44.8 nm). PASS.",
+    "zone": "Lithography Bay",
+    "wafer_lot": "LOT-88513"
+  }
+]

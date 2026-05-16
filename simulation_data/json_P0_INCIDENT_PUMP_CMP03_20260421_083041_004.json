@@ -1,0 +1,21 @@
+[
+  {
+    "timestamp": "2026-04-21T08:30:41Z",
+    "source": "device_PUMP-CMP-03",
+    "event_type": "overheat",
+    "severity": "CRITICAL",
+    "message": "Slurry pump motor temperature exceeded 140\u00b0C. Cooling system failure. CMP tool halted.",
+    "zone": "CMP Bay 2",
+    "motor_temp_c": 144,
+    "coolant_flow_lpm": 0.0
+  },
+  {
+    "timestamp": "2026-04-21T08:31:00Z",
+    "source": "tool_CMP-03",
+    "event_type": "emergency_stop",
+    "severity": "CRITICAL",
+    "message": "CMP-03 emergency stop triggered by pump overheat interlock. Wafer carrier lifted.",
+    "zone": "CMP Bay 2",
+    "wafer_lot": "LOT-88558"
+  }
+]

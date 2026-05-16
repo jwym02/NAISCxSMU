@@ -108,7 +108,7 @@ RE_SEVERITY  = re.compile(r"\b(ERROR|CRITICAL|WARNING|WARN|INFO|DEBUG)\b", re.IG
 RE_SOURCE    = re.compile(r"\b(machine|tool|device|host)_\w+", re.IGNORECASE)
 RULES_TABLE = os.getenv("DYNAMODB_TABLE_RULES", "normalization-rules")
 SEVERITY_MAP = {
-    "CRITICAL": "error", "ERROR": "error",
+    "CRITICAL": "critical", "ERROR": "error",
     "WARNING": "warning", "WARN": "warning",
     "INFO": "info", "DEBUG": "info"
 }

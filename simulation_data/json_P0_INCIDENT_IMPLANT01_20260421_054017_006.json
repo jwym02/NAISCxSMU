@@ -1,0 +1,21 @@
+[
+  {
+    "timestamp": "2026-04-21T05:40:17Z",
+    "source": "tool_IMPLANT-01",
+    "event_type": "beam_current_fault",
+    "severity": "CRITICAL",
+    "message": "Ion beam current dropped to zero during boron implant. Source filament failure. Lot quarantined.",
+    "zone": "Implant Bay",
+    "wafer_lot": "LOT-88541",
+    "beam_current_ma": 0.0,
+    "expected_ma": 14.5
+  },
+  {
+    "timestamp": "2026-04-21T05:40:30Z",
+    "source": "machine_MES-SERVER-01",
+    "event_type": "lot_quarantine",
+    "severity": "CRITICAL",
+    "message": "LOT-88541 quarantined pending implant dose verification. 25 wafers at risk.",
+    "zone": "Implant Bay"
+  }
+]

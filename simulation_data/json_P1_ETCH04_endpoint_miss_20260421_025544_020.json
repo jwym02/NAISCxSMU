@@ -1,0 +1,13 @@
+[
+  {
+    "timestamp": "2026-04-21T02:55:44Z",
+    "source": "tool_ETCH-04",
+    "event_type": "endpoint_miss",
+    "severity": "ERROR",
+    "message": "Etch endpoint not detected within 180s timeout. Wafer may be over-etched. Flagged for metrology.",
+    "zone": "Etch Bay 1",
+    "wafer_lot": "LOT-88514",
+    "timeout_s": 180,
+    "recipe": "POLY-GATE-ETCH-v7"
+  }
+]

@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "Bash(npm install *)",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(curl -s http://localhost:8080/categories)",
+      "Bash(curl -s \"http://localhost:8080/queue\")",
+      "Bash(docker compose *)"
     ]
   }
 }

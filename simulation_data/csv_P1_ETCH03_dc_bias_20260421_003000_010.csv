@@ -1,0 +1,4 @@
+timestamp,source,event_type,severity,message,zone,wafer_lot,value,unit,setpoint,limit_low,limit_high
+2026-04-21T00:30:00Z,tool_ETCH-03,dc_bias_reading,INFO,DC bias stable during main etch,Etch Bay 1,LOT-88505,-285.0,V,-280.0,-300.0,-260.0
+2026-04-21T00:40:00Z,tool_ETCH-03,dc_bias_reading,WARNING,DC bias drifting toward lower limit,Etch Bay 1,LOT-88505,-304.0,V,-280.0,-300.0,-260.0
+2026-04-21T00:45:00Z,tool_ETCH-03,dc_bias_reading,ERROR,DC bias out of spec — plasma etch uniformity at risk,Etch Bay 1,LOT-88505,-315.0,V,-280.0,-300.0,-260.0

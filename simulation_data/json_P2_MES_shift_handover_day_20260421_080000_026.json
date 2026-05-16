@@ -1,0 +1,18 @@
+[
+  {
+    "timestamp": "2026-04-21T08:00:00Z",
+    "source": "machine_MES-SERVER-01",
+    "event_type": "shift_handover",
+    "severity": "INFO",
+    "message": "Shift handover complete. Day shift started. 28 active lots in fab.",
+    "zone": "MES"
+  },
+  {
+    "timestamp": "2026-04-21T08:01:15Z",
+    "source": "machine_MES-SERVER-01",
+    "event_type": "wip_snapshot",
+    "severity": "INFO",
+    "message": "WIP snapshot: PECVD (3 lots), ETCH (5 lots), LITHO (4 lots), CMP (2 lots), IMPL (2 lots), WET (6 lots), DIFF (3 lots), METROLOGY (3 lots).",
+    "zone": "MES"
+  }
+]

@@ -1,0 +1,4 @@
+timestamp,source,event_type,severity,message,zone,wafer_lot,value,unit,setpoint,limit_low,limit_high
+2026-04-21T11:00:00Z,tool_CMP-02,removal_rate_reading,INFO,Cu CMP removal rate on target,CMP Bay 2,LOT-88568,502.0,A/min,500.0,450.0,550.0
+2026-04-21T11:10:00Z,tool_CMP-02,removal_rate_reading,INFO,Cu CMP removal rate stable,CMP Bay 2,LOT-88568,498.5,A/min,500.0,450.0,550.0
+2026-04-21T11:20:00Z,tool_CMP-02,removal_rate_reading,INFO,Cu CMP removal rate on target — approaching endpoint,CMP Bay 2,LOT-88568,495.1,A/min,500.0,450.0,550.0

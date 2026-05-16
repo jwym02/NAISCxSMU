@@ -1,0 +1,27 @@
+[
+  {
+    "timestamp": "2026-04-21T14:15:14Z",
+    "source": "machine_ROBOT-ARM-01",
+    "event_type": "wafer_drop",
+    "severity": "CRITICAL",
+    "message": "Wafer drop event at loadlock transfer. Wafer detected on floor sensor. E-stop engaged.",
+    "zone": "Transfer Chamber 1",
+    "wafer_lot": "LOT-88591"
+  },
+  {
+    "timestamp": "2026-04-21T14:15:19Z",
+    "source": "machine_MES-SERVER-01",
+    "event_type": "equipment_alarm",
+    "severity": "CRITICAL",
+    "message": "ROBOT-ARM-01 E-stop. Chamber vented for recovery. Engineering team paged.",
+    "zone": "Transfer Chamber 1"
+  },
+  {
+    "timestamp": "2026-04-21T15:02:00Z",
+    "source": "machine_ROBOT-ARM-01",
+    "event_type": "recovery_complete",
+    "severity": "INFO",
+    "message": "Broken wafer removed. Chamber cleaned and re-pumped. Robot re-qualified. LOT-88591 wafer count adjusted (1 scrapped).",
+    "zone": "Transfer Chamber 1"
+  }
+]

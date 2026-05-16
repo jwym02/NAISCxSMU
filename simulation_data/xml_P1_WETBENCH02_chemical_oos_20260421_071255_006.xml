@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<EventLog facility="semiconductor-fab" site="FAB-12" exported="2026-04-21T08:00:00Z">
+
+  <Event>
+    <timestamp>2026-04-21T07:12:55Z</timestamp>
+    <source>machine_WET-BENCH-02</source>
+    <event_type>chemical_concentration_oos</event_type>
+    <severity>WARNING</severity>
+    <message>HF bath concentration 0.38% (spec 0.50% ±0.05%). Refreshing bath before next lot.</message>
+    <zone>Wet Clean Bay</zone>
+    <spec_pct>0.50</spec_pct>
+    <measured_pct>0.38</measured_pct>
+    <bath_id>HF-BATH-02</bath_id>
+  </Event>
+</EventLog>

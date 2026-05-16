@@ -1,0 +1,13 @@
+[
+  {
+    "timestamp": "2026-04-21T01:00:00Z",
+    "source": "device_PUMP-CVD-02",
+    "event_type": "vibration_reading",
+    "severity": "INFO",
+    "message": "Dry pump vibration within normal range: 1.2 mm/s (limit 3.5 mm/s).",
+    "zone": "Fab Bay 2",
+    "value": 1.2,
+    "unit": "mm/s",
+    "limit": 3.5
+  }
+]

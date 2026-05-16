@@ -1,0 +1,18 @@
+[
+  {
+    "timestamp": "2026-04-21T00:01:14Z",
+    "source": "machine_MES-SERVER-01",
+    "event_type": "shift_handover",
+    "severity": "INFO",
+    "message": "Shift handover complete. Night shift started. 25 active lots in fab.",
+    "zone": "MES"
+  },
+  {
+    "timestamp": "2026-04-21T00:03:45Z",
+    "source": "machine_MES-SERVER-01",
+    "event_type": "lot_dispatch",
+    "severity": "INFO",
+    "message": "LOT-88501 dispatched to WET-BENCH-01 for post-dep clean.",
+    "zone": "MES"
+  }
+]

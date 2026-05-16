@@ -9,10 +9,14 @@ CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;
 -- ─────────────────────────────────────────
 -- ENUMS
 -- ─────────────────────────────────────────
-CREATE TYPE severity_level   AS ENUM ('CRITICAL', 'ERROR', 'WARN', 'INFO', 'DEBUG');
-CREATE TYPE urgency_priority AS ENUM ('P0', 'P1', 'P2', 'DEADLETTER');
-CREATE TYPE log_format_type  AS ENUM ('JSON', 'XML', 'CSV', 'SYSLOG', 'KEY_VALUE', 'TEXT', 'BINARY', 'UNKNOWN');
-CREATE TYPE path_type        AS ENUM ('HOT', 'COLD', 'DEADLETTER');
+DO $$ BEGIN CREATE TYPE severity_level   AS ENUM ('CRITICAL', 'ERROR', 'WARN', 'INFO', 'DEBUG');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE urgency_priority AS ENUM ('P0', 'P1', 'P2', 'DEADLETTER');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE log_format_type  AS ENUM ('JSON', 'XML', 'CSV', 'SYSLOG', 'KEY_VALUE', 'TEXT', 'BINARY', 'UNKNOWN');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE path_type        AS ENUM ('HOT', 'COLD', 'DEADLETTER');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- ─────────────────────────────────────────
 -- LOG EVENTS (core hypertable)

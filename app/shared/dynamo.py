@@ -56,11 +56,16 @@ def update_feedback_rule(source: str, category: str, approved: bool) -> None:
         total = approvals + rejections
         boost = round((approvals - rejections) / max(total, 1) * 0.20, 4)
 
-        # 3. Write the updated item back, preserving any existing fields
+        # 3. Write the updated item back, preserving any existing fields.
+        # Also write the "category" attribute explicitly so lookup_rule() in
+        # normalizer.py can read it back as a category override for this source.
+        # Without this, the human-corrected category is stored in the key
+        # (fieldName) but never surfaced as a field the normalizer can use.
         new_item = {
-            **item,                                          # keep category / recommended_action / etc.
+            **item,                                          # keep recommended_action / etc.
             "vendorId":         {"S": source},
             "fieldName":        {"S": category if category else "default"},
+            "category":         {"S": category if category else "default"},
             "approval_count":   {"N": str(approvals)},
             "rejection_count":  {"N": str(rejections)},
             "confidence_boost": {"N": str(boost)},

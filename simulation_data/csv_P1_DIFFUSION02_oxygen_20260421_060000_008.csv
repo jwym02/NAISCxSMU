@@ -1,0 +1,3 @@
+timestamp,source,event_type,severity,message,zone,wafer_lot,value,unit,setpoint,limit_low,limit_high
+2026-04-21T06:00:00Z,tool_DIFFUSION-02,oxygen_concentration,INFO,Ambient O2 within spec during inert anneal,Diffusion Bay,LOT-88545,0.8,ppm,,0.0,2.0
+2026-04-21T06:05:00Z,tool_DIFFUSION-02,oxygen_concentration,ERROR,O2 spike detected during anneal — wafer oxidation risk,Diffusion Bay,LOT-88545,8.4,ppm,,0.0,2.0

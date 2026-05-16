@@ -1,0 +1,4 @@
+timestamp,source,event_type,severity,message,zone,wafer_lot,value,unit,setpoint,limit_low,limit_high
+2026-04-21T05:00:00Z,device_CHILLER-ETCH-01,coolant_temp_reading,INFO,Chiller outlet temperature nominal,Etch Bay 2,,18.1,degC,18.0,17.0,19.0
+2026-04-21T05:05:00Z,device_CHILLER-ETCH-01,coolant_temp_reading,WARNING,Chiller outlet temp above upper limit,Etch Bay 2,,19.8,degC,18.0,17.0,19.0
+2026-04-21T05:10:00Z,device_CHILLER-ETCH-01,coolant_temp_reading,CRITICAL,Chiller outlet temp critically high — coolant loss suspected,Etch Bay 2,,22.5,degC,18.0,17.0,19.0

@@ -289,11 +289,13 @@
 .btn-approve          { background: #22c55e; color: #ffffff !important; }
 .btn-approve:hover:not(:disabled) { background: #16a34a; }
 
-.btn-reject           { background: #ef4444; color: #ffffff !important; }
-.btn-reject:hover:not(:disabled)  { background: #dc2626; }
+.btn-reject           { background: #6b7280; color: #ffffff !important; }
+.btn-reject:hover:not(:disabled)  { background: #4b5563; }
 
 .btn-approve:disabled,
 .btn-reject:disabled  { opacity: 0.45; cursor: not-allowed; }
+
+.btn-approve:disabled[title] { cursor: help; }
 
 /* Override: force visible text in review components */
 .review-queue-bar {
@@ -611,11 +613,11 @@
 }
 
 .btn-reject {
-  background: #ef4444 !important;
+  background: #6b7280 !important;
 }
 
 .btn-reject:hover:not(:disabled) {
-  background: #dc2626 !important;
+  background: #4b5563 !important;
 }
 
 /* ── Filter UI ── */
@@ -683,4 +685,224 @@
   border: 1px solid #fde68a;
   border-radius: 4px;
   margin-bottom: 12px;
+}
+
+/* ── Severity selector in card header ── */
+.severity-select {
+  appearance: none;
+  -webkit-appearance: none;
+  font-size: 0.72rem;
+  font-weight: 700;
+  font-family: inherit;
+  padding: 0.2rem 0.55rem;
+  border-radius: 4px;
+  border: none;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  outline: none;
+}
+
+.severity-select-critical { background: #fee2e2; color: #991b1b !important; }
+.severity-select-error     { background: #fef3c7; color: #92400e !important; }
+.severity-select-warning   { background: #fef9c3; color: #713f12 !important; }
+.severity-select-info      { background: #e0f2fe; color: #075985 !important; }
+
+.severity-select:focus {
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.35);
+}
+
+.severity-changed-hint {
+  font-size: 0.68rem;
+  color: #6366f1 !important;
+  font-style: italic;
+}
+
+/* ── Category select dropdown ── */
+.review-select {
+  font-size: 0.85rem;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  color: #111827 !important;
+  background: #ffffff;
+  width: 100%;
+  outline: none;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.review-select:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+/* ── Add-new category inline row ── */
+.review-category-add {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.btn-category-save {
+  font-size: 0.78rem;
+  padding: 0.3rem 0.65rem;
+  background: #3b82f6;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+}
+
+.btn-category-save:hover {
+  background: #2563eb;
+}
+
+.btn-category-cancel {
+  font-size: 0.78rem;
+  padding: 0;
+  background: none;
+  border: none;
+  color: #6b7280 !important;
+  cursor: pointer;
+  text-decoration: underline;
+  font-family: inherit;
+}
+
+.review-add-error {
+  font-size: 0.75rem;
+  color: #ef4444 !important;
+  width: 100%;
+}
+
+/* ── CRITICAL confirm strip ── */
+.review-confirm-strip {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  padding: 0.55rem 0.9rem;
+  background: #fef9c3;
+  border-top: 1px solid #fde68a;
+  border-bottom: 1px solid #fde68a;
+  font-size: 0.82rem;
+  color: #713f12 !important;
+}
+
+.btn-confirm-forward {
+  font-size: 0.8rem;
+  padding: 0.3rem 0.75rem;
+  background: #16a34a;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+}
+
+.btn-confirm-forward:hover {
+  background: #15803d;
+}
+
+.btn-confirm-cancel {
+  font-size: 0.8rem;
+  padding: 0.3rem 0.65rem;
+  background: none;
+  border: 1px solid #9ca3af;
+  border-radius: 4px;
+  color: #374151 !important;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+/* ── Raw file overlay helpers ── */
+.review-file-loading,
+.review-file-error {
+  font-size: 0.82rem;
+  padding: 0.4rem 0.6rem;
+  margin: 0;
+}
+
+.review-file-error {
+  color: #ef4444 !important;
+}
+
+.review-file-truncated {
+  font-size: 0.75rem;
+  color: #b45309 !important;
+  background: #fef9c3;
+  padding: 0.25rem 0.5rem;
+  margin: 0 0 0.3rem;
+  border-radius: 3px;
+}
+
+/* ── Event message highlight ── */
+.review-event-message {
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 6px;
+  padding: 0.55rem 0.7rem;
+  margin-bottom: 0.2rem;
+}
+
+.review-message {
+  font-size: 0.9rem !important;
+  color: #0c4a6e !important;
+  font-weight: 500;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ── Event metadata row ── */
+.review-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  margin-bottom: 0.2rem;
+}
+
+.review-meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.review-meta-label {
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: #9ca3af !important;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.review-meta-value {
+  font-size: 0.8rem;
+  color: #374151 !important;
+  font-family: ui-monospace, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 18ch;
+}
+
+/* ── Divider between event info and AI analysis ── */
+.review-divider {
+  height: 1px;
+  background: #e5e7eb;
+  margin: 0.3rem 0;
+}
+
+/* ── Hint text next to label ── */
+.review-label-hint {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: #9ca3af !important;
+  font-size: 0.65rem;
 }

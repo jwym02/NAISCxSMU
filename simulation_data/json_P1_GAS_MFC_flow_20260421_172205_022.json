@@ -1,0 +1,12 @@
+[
+  {
+    "timestamp": "2026-04-21T17:22:05Z",
+    "source": "machine_GAS-PANEL-01",
+    "event_type": "mass_flow_warning",
+    "severity": "WARNING",
+    "message": "N2O MFC flow deviation: commanded 500 sccm, measured 471 sccm. MFC recalibration required.",
+    "zone": "Gas Cabinet A",
+    "commanded_sccm": 500,
+    "measured_sccm": 471
+  }
+]

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<EventLog facility="semiconductor-fab" site="FAB-12" exported="2026-04-21T05:00:00Z">
+
+  <Event>
+    <timestamp>2026-04-21T04:18:02Z</timestamp>
+    <source>device_CHILLER-CMP-01</source>
+    <event_type>coolant_leak</event_type>
+    <severity>CRITICAL</severity>
+    <message>Coolant leak at chiller outlet manifold. Flow dropped to 0.2 L/min (normal 4.5 L/min). CMP tool emergency stop.</message>
+    <zone>CMP Bay 1</zone>
+    <flow_lpm_normal>4.5</flow_lpm_normal>
+    <flow_lpm_actual>0.2</flow_lpm_actual>
+  </Event>
+  <Event>
+    <timestamp>2026-04-21T04:18:15Z</timestamp>
+    <source>tool_CMP-01</source>
+    <event_type>emergency_stop</event_type>
+    <severity>CRITICAL</severity>
+    <message>CMP-01 emergency stop. Coolant loss interlock triggered. Wafer carrier retracted. Slurry drain initiated.</message>
+    <zone>CMP Bay 1</zone>
+    <wafer_lot>LOT-88532</wafer_lot>
+  </Event>
+</EventLog>

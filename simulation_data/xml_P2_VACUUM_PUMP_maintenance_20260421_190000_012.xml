@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<EventLog facility="semiconductor-fab" site="FAB-12" exported="2026-04-21T19:30:00Z">
+
+  <Event>
+    <timestamp>2026-04-21T19:00:00Z</timestamp>
+    <source>device_VACUUM-PUMP-ETCH-02</source>
+    <event_type>maintenance_due</event_type>
+    <severity>INFO</severity>
+    <message>Dry pump scheduled maintenance interval reached (2000 hrs). Schedule downtime for service.</message>
+    <zone>Etch Bay 1</zone>
+    <runtime_hours>2001</runtime_hours>
+  </Event>
+</EventLog>

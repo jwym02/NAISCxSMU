@@ -35,8 +35,8 @@ def determine_topic(normalized_record: dict) -> str | None:
     if confidence < 0.3 or (category == "unknown" and severity == "error"):
         return TOPIC_DEADLETTER
 
-    # P0: Critical safety events
-    if severity == "error" and any(p0 in category for p0 in P0_CATEGORIES):
+    # P0: Any CRITICAL severity event
+    if severity == "critical":
         return TOPIC_P0
 
     # P1: Standard errors

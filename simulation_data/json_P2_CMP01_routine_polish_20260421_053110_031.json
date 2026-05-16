@@ -1,0 +1,20 @@
+[
+  {
+    "timestamp": "2026-04-21T05:31:10Z",
+    "source": "tool_CMP-01",
+    "event_type": "polishing_started",
+    "severity": "INFO",
+    "message": "Cu CMP polishing started for LOT-88540. Carrier 45 rpm, platen 42 rpm, downforce 3.2 psi.",
+    "zone": "CMP Bay 1",
+    "wafer_lot": "LOT-88540"
+  },
+  {
+    "timestamp": "2026-04-21T06:01:50Z",
+    "source": "tool_CMP-01",
+    "event_type": "endpoint_detected",
+    "severity": "INFO",
+    "message": "Endpoint detected at 62s (target 60s \u00b110s). Post-CMP thickness 215 nm. PASS.",
+    "zone": "CMP Bay 1",
+    "wafer_lot": "LOT-88540"
+  }
+]

@@ -1,0 +1,24 @@
+[
+  {
+    "timestamp": "2026-04-21T04:10:05Z",
+    "source": "tool_LITHO-SCANNER-07",
+    "event_type": "overlay_reading",
+    "severity": "WARNING",
+    "message": "Overlay approaching limit on M2 metal layer: 4.3 nm (spec \u2264 5.0 nm). Monitoring closely.",
+    "zone": "Lithography Bay",
+    "wafer_lot": "LOT-88530",
+    "value": 4.3,
+    "unit": "nm"
+  },
+  {
+    "timestamp": "2026-04-21T04:15:00Z",
+    "source": "tool_LITHO-SCANNER-07",
+    "event_type": "overlay_reading",
+    "severity": "ERROR",
+    "message": "Overlay out of spec on M2 layer: 6.1 nm. Lot requires rework. Scanner lens re-qualified.",
+    "zone": "Lithography Bay",
+    "wafer_lot": "LOT-88530",
+    "value": 6.1,
+    "unit": "nm"
+  }
+]

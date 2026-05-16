@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<EventLog facility="semiconductor-fab" site="FAB-12" exported="2026-04-21T10:00:00Z">
+
+  <Event>
+    <timestamp>2026-04-21T09:05:30Z</timestamp>
+    <source>tool_LITHO-SCANNER-03</source>
+    <event_type>focus_error</event_type>
+    <severity>WARNING</severity>
+    <message>Autofocus failed on wafer slot 7 — surface height out of range. Wafer excluded from exposure.</message>
+    <wafer_lot>LOT-88561</wafer_lot>
+    <failed_slot>7</failed_slot>
+    <recipe>M1-METAL-LAYER-v12</recipe>
+  </Event>
+</EventLog>

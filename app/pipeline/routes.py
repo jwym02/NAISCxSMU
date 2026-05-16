@@ -3,8 +3,11 @@ HTTP API for the Pipeline service.
 All routes are registered on a FastAPI APIRouter and mounted in main.py.
 """
 
+import asyncio
+import re
+
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from typing import Optional
 from datetime import datetime, timezone
 import logging
@@ -12,6 +15,7 @@ import logging
 from pydantic import BaseModel
 from app.shared.kafka_client import get_kafka_client
 from app.shared.dynamo import update_feedback_rule
+from app.shared.minio_client import minio_client
 from app.shared.db import (
     get_review_queue_pending,
     get_event_with_routing,
@@ -19,6 +23,8 @@ from app.shared.db import (
     get_pool,
     get_event_stats,
     get_events_timeseries,
+    get_all_categories,
+    insert_category,
 )
 
 log = logging.getLogger(__name__)
@@ -27,7 +33,12 @@ log = logging.getLogger(__name__)
 class ReviewRequest(BaseModel):
     decision: str
     notes: Optional[str] = None
-    category: Optional[str] = None   # AI-assigned (or corrected) category — used for DynamoDB feedback
+    category: Optional[str] = None   # reviewer-corrected category — fed back to DynamoDB
+    severity: Optional[str] = None   # reviewer-corrected severity — used for Kafka routing
+
+
+class CategoryRequest(BaseModel):
+    name: str
 
 
 def _flatten_event(item: dict) -> dict:
@@ -210,13 +221,16 @@ async def review_queue_item(job_id: str, review: ReviewRequest):
 
         # ── KAFKA FORWARD (approved events only) ──────────────────────────────
         if is_updated and review.decision == "approved" and event_for_feedback:
-            severity = event_for_feedback.get("severity", "ERROR").upper()
+            # Reviewer's severity takes precedence over the AI-assigned value.
+            # This is the human override that determines which Kafka topic receives the event.
+            effective_severity = (review.severity or event_for_feedback.get("severity", "ERROR")).upper()
+            event_to_forward = {**event_for_feedback, "severity": effective_severity}
             kafka_client = await get_kafka_client()
             if kafka_client:
-                if severity == "CRITICAL":
-                    await kafka_client.send_p0_event(event_for_feedback, key=event_for_feedback.get("source", "unknown"))
+                if effective_severity == "CRITICAL":
+                    await kafka_client.send_p0_event(event_to_forward, key=event_to_forward.get("source", "unknown"))
                 else:
-                    await kafka_client.send_p1_event(event_for_feedback, key=event_for_feedback.get("source", "unknown"))
+                    await kafka_client.send_p1_event(event_to_forward, key=event_to_forward.get("source", "unknown"))
 
         return {
             "job_id": job_id,
@@ -232,7 +246,98 @@ async def review_queue_item(job_id: str, review: ReviewRequest):
         raise HTTPException(status_code=500, detail="Error processing review")
 
 
-# ── ENDPOINT 5: GET /stats ────────────────────────────────────────────────────
+# ── ENDPOINT 5: GET /logs/{job_id}/raw ───────────────────────────────────────
+
+RAW_FILE_SIZE_LIMIT = 500 * 1024  # 500 KB
+
+@router.get("/logs/{job_id}/raw")
+async def get_raw_log_file(job_id: str):
+    """
+    Return the original uploaded log file content from MinIO as plain text.
+    Truncated at 500 KB with X-Truncated: true header if larger.
+    """
+    try:
+        pool = await get_pool()
+        if not pool:
+            raise HTTPException(status_code=503, detail="Database not available")
+
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT file_name FROM raw_logs WHERE job_id = $1 LIMIT 1", job_id
+            )
+
+        if not row:
+            raise HTTPException(status_code=404, detail="No raw log found for this job")
+
+        file_name = row["file_name"]
+        object_name = f"raw_logs/{job_id}/{file_name}"
+
+        def _fetch_from_minio():
+            response = minio_client.get_object("raw-logs", object_name)
+            try:
+                data = response.read(RAW_FILE_SIZE_LIMIT + 1)
+            finally:
+                response.close()
+                response.release_conn()
+            return data
+
+        loop = asyncio.get_event_loop()
+        raw_bytes = await loop.run_in_executor(None, _fetch_from_minio)
+
+        truncated = len(raw_bytes) > RAW_FILE_SIZE_LIMIT
+        if truncated:
+            raw_bytes = raw_bytes[:RAW_FILE_SIZE_LIMIT]
+
+        try:
+            content = raw_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            content = raw_bytes.decode("latin-1")
+
+        headers = {"X-Truncated": "true" if truncated else "false"}
+        return Response(content=content, media_type="text/plain", headers=headers)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Error fetching raw log for job {job_id}: {e}")
+        raise HTTPException(status_code=500, detail="Error fetching raw log file")
+
+
+# ── ENDPOINT 6: GET /categories ───────────────────────────────────────────────
+
+@router.get("/categories")
+async def list_categories():
+    """Return all known event categories."""
+    try:
+        cats = await get_all_categories()
+        return {"categories": cats}
+    except Exception as e:
+        log.error(f"Error fetching categories: {e}")
+        raise HTTPException(status_code=500, detail="Error fetching categories")
+
+
+# ── ENDPOINT 7: POST /categories ──────────────────────────────────────────────
+
+_VALID_CATEGORY_RE = re.compile(r'^[a-z][a-z0-9_]{0,31}$')
+
+@router.post("/categories")
+async def add_category(body: CategoryRequest):
+    """Add a new event category. Name must be lowercase alphanumeric + underscores, max 32 chars."""
+    name = body.name.strip().lower()
+    if not _VALID_CATEGORY_RE.match(name):
+        raise HTTPException(
+            status_code=400,
+            detail="Category name must be lowercase letters, digits, or underscores (2–32 chars, start with a letter)"
+        )
+    try:
+        created = await insert_category(name)
+        return {"name": name, "created": created}
+    except Exception as e:
+        log.error(f"Error adding category '{name}': {e}")
+        raise HTTPException(status_code=500, detail="Error adding category")
+
+
+# ── ENDPOINT 8: GET /stats ────────────────────────────────────────────────────
 
 @router.get("/stats")
 async def get_stats():
@@ -245,7 +350,7 @@ async def get_stats():
         raise HTTPException(status_code=500, detail="Error fetching stats")
 
 
-# ── ENDPOINT 6: GET /events/timeseries ────────────────────────────────────────
+# ── ENDPOINT 9: GET /events/timeseries ────────────────────────────────────────
 
 @router.get("/events/timeseries")
 async def get_timeseries(hours: int = 12):
@@ -262,7 +367,7 @@ async def get_timeseries(hours: int = 12):
         raise HTTPException(status_code=500, detail="Error fetching timeseries")
 
 
-# ── ENDPOINT 7: GET /health ───────────────────────────────────────────────────
+# ── ENDPOINT 10: GET /health ──────────────────────────────────────────────────
 
 @router.get("/health")
 async def health():

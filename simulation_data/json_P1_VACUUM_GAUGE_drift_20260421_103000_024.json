@@ -1,0 +1,11 @@
+[
+  {
+    "timestamp": "2026-04-21T10:30:00Z",
+    "source": "device_VACUUM-PUMP-ETCH-01",
+    "event_type": "sensor_drift",
+    "severity": "WARNING",
+    "message": "Capacitance manometer zero offset exceeded 0.5 mTorr (actual: 0.52 mTorr). Recalibration scheduled.",
+    "zone": "Etch Bay 1",
+    "zero_offset_mtorr": 0.52
+  }
+]

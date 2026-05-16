@@ -1,0 +1,16 @@
+[
+  {
+    "timestamp": "2026-04-21T17:00:00Z",
+    "source": "machine_MES-SERVER-01",
+    "event_type": "wip_snapshot",
+    "severity": "INFO",
+    "message": "End-of-day WIP: 33 active lots, 2 on hold, 0 tools in PM, 0 offline."
+  },
+  {
+    "timestamp": "2026-04-21T18:00:00Z",
+    "source": "machine_MES-SERVER-01",
+    "event_type": "yield_report",
+    "severity": "INFO",
+    "message": "Yield report: D0 (killer defect density) 0.08/cm\u00b2. Target \u22640.10/cm\u00b2. ON TARGET."
+  }
+]

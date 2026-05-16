@@ -1,5 +1,21 @@
 # Smart Tool Log Parser — Setup Guide
 
+## Quick Port Reference
+
+| Port | Component |
+|------|-----------|
+| 3000 | Frontend (React/Vite) |
+| 5432 | TimescaleDB |
+| 6379 | Redis |
+| 8000 | DynamoDB |
+| 8080 | Pipeline API |
+| 8081 | Query API |
+| 8083 | WebSocket Alerts |
+| 8090 | Kafka UI |
+| 9001 | MinIO Console |
+
+---
+
 ## What Is This Project?
 
 This is a **log processing system** that:

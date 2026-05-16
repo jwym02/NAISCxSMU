@@ -1,0 +1,5 @@
+timestamp,source,event_type,severity,message,zone,wafer_lot,value,unit,setpoint,limit_low,limit_high
+2026-04-21T08:30:00Z,tool_ETCH-04,dc_bias_reading,INFO,DC bias stable at start of etch,Etch Bay 1,LOT-88555,-279.5,V,-280.0,-300.0,-260.0
+2026-04-21T08:35:00Z,tool_ETCH-04,temperature_reading,INFO,ESC temperature nominal,Etch Bay 1,LOT-88555,54.8,degC,55.0,40.0,60.0
+2026-04-21T08:40:00Z,tool_ETCH-04,rf_power_reading,INFO,RF power delivery stable,Etch Bay 1,LOT-88555,401.2,W,400.0,380.0,420.0
+2026-04-21T08:45:00Z,tool_ETCH-04,pressure_reading,INFO,Chamber pressure stable during main etch,Etch Bay 1,LOT-88555,5.52,mTorr,5.5,5.0,6.0

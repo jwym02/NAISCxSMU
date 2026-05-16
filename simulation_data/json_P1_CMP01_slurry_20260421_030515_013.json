@@ -1,0 +1,26 @@
+[
+  {
+    "timestamp": "2026-04-21T03:05:15Z",
+    "source": "tool_CMP-01",
+    "event_type": "removal_rate_reading",
+    "severity": "WARNING",
+    "message": "Cu CMP removal rate below spec: 437 \u00c5/min (target 500, lower limit 450).",
+    "zone": "CMP Bay 1",
+    "wafer_lot": "LOT-88520",
+    "value": 437,
+    "unit": "A/min",
+    "setpoint": 500
+  },
+  {
+    "timestamp": "2026-04-21T03:10:22Z",
+    "source": "tool_CMP-01",
+    "event_type": "removal_rate_reading",
+    "severity": "ERROR",
+    "message": "Cu removal rate critically low 388 \u00c5/min \u2014 lot at risk of non-uniform planarization. Slurry replaced.",
+    "zone": "CMP Bay 1",
+    "wafer_lot": "LOT-88520",
+    "value": 388,
+    "unit": "A/min",
+    "setpoint": 500
+  }
+]

@@ -1,0 +1,4 @@
+timestamp,source,event_type,severity,message,zone,wafer_lot,value,unit,setpoint,limit_low,limit_high
+2026-04-21T04:00:00Z,tool_LITHO-SCANNER-07,overlay_reading,INFO,Overlay within spec on M2 layer,Lithography Bay,LOT-88530,1.8,nm,,,-5.0
+2026-04-21T04:05:00Z,tool_LITHO-SCANNER-07,overlay_reading,WARNING,Overlay approaching limit on M2 layer,Lithography Bay,LOT-88530,4.3,nm,,,-5.0
+2026-04-21T04:10:00Z,tool_LITHO-SCANNER-07,overlay_reading,ERROR,Overlay out of spec on M2 layer — lot requires rework,Lithography Bay,LOT-88530,6.1,nm,,,-5.0

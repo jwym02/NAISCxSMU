@@ -1,0 +1,21 @@
+[
+  {
+    "timestamp": "2026-04-21T07:33:11Z",
+    "source": "LEGACY_CTRL_SYS_7B",
+    "event_type": "UNKNOWN_FAULT_TYPE_0x4F",
+    "severity": "error",
+    "message": "%%FLT:0x4F ERR:timeout@REG[0x3A2] \u2014 ctx=fab_bay_3 unit=pcvd_chamber_x",
+    "raw_code": "0x4F",
+    "register": "0x3A2",
+    "unit": "pcvd_chamber_x"
+  },
+  {
+    "timestamp": "2026-04-21T07:33:45Z",
+    "source": "LEGACY_CTRL_SYS_7B",
+    "event_type": "WATCHDOG_TIMEOUT",
+    "severity": "error",
+    "message": "Watchdog timeout on process thread #7. No heartbeat for 45s.",
+    "thread_id": 7,
+    "timeout_s": 45
+  }
+]

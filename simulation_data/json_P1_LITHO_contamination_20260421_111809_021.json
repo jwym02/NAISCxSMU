@@ -1,0 +1,13 @@
+[
+  {
+    "timestamp": "2026-04-21T11:18:09Z",
+    "source": "tool_LITHO-SCANNER-07",
+    "event_type": "contamination_alert",
+    "severity": "ERROR",
+    "message": "Reticle contamination: 47 particles detected (limit 5). Scanner locked pending cleaning.",
+    "zone": "Lithography Bay",
+    "wafer_lot": "LOT-88570",
+    "particle_count": 47,
+    "particle_size_nm": 120
+  }
+]

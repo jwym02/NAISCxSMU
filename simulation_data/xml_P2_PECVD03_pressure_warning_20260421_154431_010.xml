@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<EventLog facility="semiconductor-fab" site="FAB-12" exported="2026-04-21T16:00:00Z">
+
+  <Event>
+    <timestamp>2026-04-21T15:44:31Z</timestamp>
+    <source>tool_PECVD-03</source>
+    <event_type>pressure_fault</event_type>
+    <severity>WARNING</severity>
+    <message>Process chamber pressure drifted above spec during deposition: 8.2 mTorr vs 7.0 mTorr target.</message>
+    <zone>Fab Bay 3</zone>
+    <wafer_lot>LOT-88597</wafer_lot>
+    <target_mtorr>7.0</target_mtorr>
+    <actual_mtorr>8.2</actual_mtorr>
+  </Event>
+</EventLog>

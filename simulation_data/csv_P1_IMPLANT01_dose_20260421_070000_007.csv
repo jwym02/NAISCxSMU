@@ -1,0 +1,4 @@
+timestamp,source,event_type,severity,message,zone,wafer_lot,value,unit,setpoint,limit_low,limit_high
+2026-04-21T07:00:00Z,tool_IMPLANT-01,dose_reading,INFO,As implant dose on target,Implant Bay,LOT-88551,1.01e14,ions/cm2,1.0e14,9.5e13,1.05e14
+2026-04-21T07:05:00Z,tool_IMPLANT-01,dose_reading,WARNING,As implant dose slightly above upper spec,Implant Bay,LOT-88551,1.07e14,ions/cm2,1.0e14,9.5e13,1.05e14
+2026-04-21T07:10:00Z,tool_IMPLANT-01,dose_reading,ERROR,As implant dose out of spec — lot quarantined,Implant Bay,LOT-88551,1.15e14,ions/cm2,1.0e14,9.5e13,1.05e14

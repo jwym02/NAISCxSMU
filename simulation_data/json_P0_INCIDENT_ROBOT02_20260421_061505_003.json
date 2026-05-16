@@ -1,0 +1,28 @@
+[
+  {
+    "timestamp": "2026-04-21T06:15:05Z",
+    "source": "machine_ROBOT-ARM-02",
+    "event_type": "collision",
+    "severity": "CRITICAL",
+    "message": "Wafer handling arm collision at end-effector \u2014 E-stop engaged. Wafer breakage confirmed.",
+    "zone": "Transfer Chamber 2",
+    "wafer_lot": "LOT-88547",
+    "arm_position": "slot_09"
+  },
+  {
+    "timestamp": "2026-04-21T06:15:09Z",
+    "source": "machine_MES-SERVER-01",
+    "event_type": "equipment_alarm",
+    "severity": "CRITICAL",
+    "message": "EQUIPMENT ALARM: ROBOT-ARM-02 E-stop. Transfer chamber vented for recovery. Engineering paged.",
+    "zone": "Transfer Chamber 2"
+  },
+  {
+    "timestamp": "2026-04-21T06:42:00Z",
+    "source": "machine_ROBOT-ARM-02",
+    "event_type": "recovery_complete",
+    "severity": "INFO",
+    "message": "Broken wafer removed. Transfer chamber re-pumped. Robot arm re-qualified and returned to service.",
+    "zone": "Transfer Chamber 2"
+  }
+]

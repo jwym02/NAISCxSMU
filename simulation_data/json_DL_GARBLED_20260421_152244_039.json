@@ -1,0 +1,16 @@
+[
+  {
+    "timestamp": "2026-04-21T15:22:44Z",
+    "source": "EQUIP_UNKNOWN_09",
+    "event_type": "UNDEFINED_EVENT",
+    "severity": "error",
+    "message": "?? unrecognized alarm class 'TypeX' -- check vendor manual \u00a712.4"
+  },
+  {
+    "timestamp": "2026-04-21T15:23:00Z",
+    "source": "EQUIP_UNKNOWN_09",
+    "event_type": "UNDEFINED_EVENT",
+    "severity": "error",
+    "message": "Repeated: alarm class 'TypeX' persists. No handler registered."
+  }
+]

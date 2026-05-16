@@ -1,0 +1,13 @@
+[
+  {
+    "timestamp": "2026-04-21T07:12:55Z",
+    "source": "machine_WET-BENCH-02",
+    "event_type": "chemical_concentration_oos",
+    "severity": "WARNING",
+    "message": "HF bath concentration: 0.38% (spec: 0.50% \u00b10.05%). Refreshing bath before next lot.",
+    "zone": "Wet Clean Bay",
+    "spec_pct": 0.5,
+    "measured_pct": 0.38,
+    "bath_id": "HF-BATH-02"
+  }
+]

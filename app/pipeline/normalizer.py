@@ -137,24 +137,43 @@ RULES_TABLE    = os.getenv("DYNAMODB_TABLE_RULES", "normalization-rules")
 REVIEW_TABLE   = os.getenv("DYNAMODB_TABLE_REVIEW", "human-review-queue")
 CONFIDENCE_THRESHOLD = float(os.getenv("NORMALIZE_CONFIDENCE_THRESHOLD", "0.85"))
 
-async def call_ai(record: dict) -> dict:
-    prompt = f"""You are analyzing a manufacturing machine log event.
+async def call_ai(record: dict, category_hint: str | None = None) -> dict:
+    hint_section = ""
+    if category_hint and category_hint != "unknown":
+        hint_section = f"""
 
-    Machine: {record.get('source', 'unknown')}
-    Event Type: {record.get('event_type', 'unknown')}
-    Severity: {record.get('severity', 'unknown')}
-    Message: {record.get('message', '')}
+PRIOR HUMAN FEEDBACK: Engineers who reviewed previous events from this machine confirmed the category as '{category_hint}'. Weight this strongly — generate your root_cause and recommended_action assuming this category is correct, and assign high confidence unless the message clearly contradicts it."""
 
-    You MUST respond with ONLY a valid JSON object. No explanation, no markdown, no code blocks.
-    Use exactly these keys:
-    {{
-      "category": "thermal|mechanical|electrical|software|unknown",
-      "root_cause": "brief string describing the likely root cause",
-      "recommended_action": "brief string describing recommended action",
-      "confidence": <number between 0.0 and 1.0 representing your certainty>
-    }}
+    prompt = f"""You are an expert analyst at a semiconductor fabrication plant (fab).
+Analyze this machine log event and classify it.
 
-    For confidence: use 0.9+ if very clear, 0.7-0.9 if fairly clear, 0.5-0.7 if uncertain, <0.5 if very unclear."""
+Machine: {record.get('source', 'unknown')}
+Event Type: {record.get('event_type', 'unknown')}
+Severity: {record.get('severity', 'unknown')}
+Message: {record.get('message', '')}{hint_section}
+
+You MUST respond with ONLY a valid JSON object. No explanation, no markdown, no code blocks.
+Use exactly these keys:
+{{
+  "category": "thermal|mechanical|electrical|gas_leak|contamination|process_drift|safety|software|maintenance|unknown",
+  "root_cause": "1-2 sentences describing the most likely root cause based on the message",
+  "recommended_action": "specific action an engineer should take (e.g. 'Inspect chamber O-rings and recheck MFC calibration')",
+  "confidence": <number 0.0-1.0>
+}}
+
+Category guide:
+- thermal: temperature excursions, overheating, cooling failures, heater faults
+- mechanical: wafer handling errors, robot arm faults, valve/pump failures, collisions
+- electrical: power faults, RF arc, plasma instability, voltage/current anomalies
+- gas_leak: gas flow anomalies, MFC deviations, pressure drops, interlock trips
+- contamination: particle counts, chemical spills, cross-contamination alerts
+- process_drift: out-of-spec etch/deposition rates, yield deviations, recipe errors
+- safety: fire alarms, evacuation events, toxic gas detectors, emergency stops
+- software: MES errors, recipe load failures, communication timeouts, software crashes
+- maintenance: PM due, calibration needed, scheduled downtime, tool qualification
+- unknown: only if the message provides no useful information
+
+For confidence: 0.9+ if cause is explicit in the message, 0.7-0.9 if strongly implied, 0.5-0.7 if inferred, <0.5 if ambiguous."""
 
     try:
         async with httpx.AsyncClient() as client:
@@ -196,17 +215,24 @@ def lookup_rule(record: dict) -> dict | None:
             ExpressionAttributeValues={":v": {"S": source}}
         )
         items = response.get("Items", [])
-        if items:
-            # Return first matching rule (most specific)
-            item = items[0]
-            return {
-                "category":           item.get("category",           {}).get("S"),
-                "recommended_action": item.get("recommended_action", {}).get("S"),
-                "min_confidence":     float(item.get("min_confidence", {}).get("N", 0)),
-                # Human-review feedback boost — written by update_feedback_rule()
-                # in app/shared/dynamo.py; 0.0 when no reviews have been recorded yet
-                "confidence_boost":   float(item.get("confidence_boost", {}).get("N", 0.0)),
-            }
+        if not items:
+            return None
+
+        # Pick the item with the most human approvals — that is the most
+        # confidently validated category for this source. Ties go to the first.
+        best = max(
+            items,
+            key=lambda i: int(i.get("approval_count", {}).get("N", "0"))
+        )
+        return {
+            "category":           best.get("category",           {}).get("S"),
+            "recommended_action": best.get("recommended_action", {}).get("S"),
+            "min_confidence":     float(best.get("min_confidence", {}).get("N", 0)),
+            # Sum of boosts across all category items for this source
+            "confidence_boost":   sum(
+                float(i.get("confidence_boost", {}).get("N", "0")) for i in items
+            ),
+        }
     except Exception as e:
         logging.warning(f"DynamoDB rule lookup failed for '{source}': {e}")
     return None
@@ -257,8 +283,9 @@ async def normalize_log(parsed_records: list) -> dict:
     review_queue_items = []
 
     for record in parsed_records:
-        ai_result = await call_ai(record)
-        rule      = lookup_rule(record)
+        rule          = lookup_rule(record)
+        category_hint = rule.get("category") if rule and rule.get("category") else None
+        ai_result     = await call_ai(record, category_hint=category_hint)
         final, confidence, review_reason = combine_and_score(record, ai_result, rule)
 
         requires_review = (

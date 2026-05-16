@@ -1,0 +1,14 @@
+[
+  {
+    "timestamp": "2026-04-21T01:03:11Z",
+    "source": "tool_PECVD-04",
+    "event_type": "film_thickness_oos",
+    "severity": "ERROR",
+    "message": "TEOS oxide deposition thickness 312 nm vs 400 nm target. Run aborted after step 2.",
+    "zone": "Fab Bay 3",
+    "wafer_lot": "LOT-88505",
+    "target_nm": 400,
+    "measured_nm": 312,
+    "recipe": "TEOS-STD-400NM-v3"
+  }
+]

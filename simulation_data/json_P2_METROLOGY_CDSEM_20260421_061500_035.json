@@ -1,0 +1,11 @@
+[
+  {
+    "timestamp": "2026-04-21T06:15:00Z",
+    "source": "machine_METROLOGY-CD-SEM-01",
+    "event_type": "measurement_complete",
+    "severity": "INFO",
+    "message": "CD-SEM measurement complete for LOT-88546 post-etch. Mean gate CD: 43.9 nm. Cpk: 1.52. PASS.",
+    "zone": "Metrology Bay",
+    "wafer_lot": "LOT-88546"
+  }
+]

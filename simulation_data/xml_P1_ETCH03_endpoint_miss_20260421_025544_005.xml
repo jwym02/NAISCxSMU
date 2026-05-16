@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<EventLog facility="semiconductor-fab" site="FAB-12" exported="2026-04-21T03:00:00Z">
+
+  <Event>
+    <timestamp>2026-04-21T02:55:44Z</timestamp>
+    <source>tool_ETCH-03</source>
+    <event_type>endpoint_miss</event_type>
+    <severity>ERROR</severity>
+    <message>Etch endpoint not detected within 180s timeout. Wafer may be over-etched. Flagged for metrology.</message>
+    <wafer_lot>LOT-88514</wafer_lot>
+    <timeout_s>180</timeout_s>
+    <recipe>POLY-GATE-ETCH-v7</recipe>
+  </Event>
+</EventLog>

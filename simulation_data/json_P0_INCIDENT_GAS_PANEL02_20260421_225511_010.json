@@ -1,0 +1,27 @@
+[
+  {
+    "timestamp": "2026-04-21T22:55:11Z",
+    "source": "machine_GAS-PANEL-02",
+    "event_type": "gas_leak",
+    "severity": "CRITICAL",
+    "message": "NF3 gas detector alarm in Gas Cabinet B \u2014 concentration 120 ppm (alarm: 10 ppm). Facility EHS notified.",
+    "zone": "Gas Cabinet B",
+    "sensor_ppm": 120
+  },
+  {
+    "timestamp": "2026-04-21T22:55:18Z",
+    "source": "machine_GAS-PANEL-02",
+    "event_type": "isolation_valve_closed",
+    "severity": "CRITICAL",
+    "message": "NF3 supply isolation valve closed. EHS team dispatched to Gas Cabinet B.",
+    "zone": "Gas Cabinet B"
+  },
+  {
+    "timestamp": "2026-04-21T22:55:30Z",
+    "source": "machine_MES-SERVER-01",
+    "event_type": "production_hold",
+    "severity": "CRITICAL",
+    "message": "PRODUCTION HOLD: CVD area tools halted pending Gas Cabinet B clearance.",
+    "zone": "Fab Bay 2"
+  }
+]

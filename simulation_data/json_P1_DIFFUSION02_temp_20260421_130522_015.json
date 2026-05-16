@@ -1,0 +1,14 @@
+[
+  {
+    "timestamp": "2026-04-21T13:05:22Z",
+    "source": "tool_DIFFUSION-02",
+    "event_type": "temperature_deviation",
+    "severity": "ERROR",
+    "message": "Furnace zone 3 temperature deviated +18\u00b0C from setpoint for >120s. Wafer lot quarantined.",
+    "zone": "Diffusion Bay",
+    "wafer_lot": "LOT-88582",
+    "setpoint_c": 950,
+    "actual_c": 968,
+    "duration_s": 127
+  }
+]

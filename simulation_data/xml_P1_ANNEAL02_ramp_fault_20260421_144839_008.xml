@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<EventLog facility="semiconductor-fab" site="FAB-12" exported="2026-04-21T15:00:00Z">
+
+  <Event>
+    <timestamp>2026-04-21T14:48:39Z</timestamp>
+    <source>tool_ANNEAL-02</source>
+    <event_type>ramp_rate_fault</event_type>
+    <severity>ERROR</severity>
+    <message>Temperature ramp rate exceeded spec during RTP anneal: 85°C/s vs max 75°C/s. Lot held for inspection.</message>
+    <wafer_lot>LOT-88592</wafer_lot>
+    <max_ramp_cs>75</max_ramp_cs>
+    <actual_ramp_cs>85</actual_ramp_cs>
+    <recipe>RTP-NiSi-ANNEAL-v4</recipe>
+  </Event>
+</EventLog>

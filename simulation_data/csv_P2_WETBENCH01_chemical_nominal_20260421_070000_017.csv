@@ -1,0 +1,4 @@
+timestamp,source,event_type,severity,message,zone,wafer_lot,value,unit,setpoint,limit_low,limit_high
+2026-04-21T07:00:00Z,machine_WET-BENCH-01,chemical_concentration,INFO,SC1 bath H2O2 concentration within spec,Wet Clean Bay,,0.25,pct,0.25,0.20,0.30
+2026-04-21T07:05:00Z,machine_WET-BENCH-01,chemical_concentration,INFO,SC1 bath NH4OH concentration within spec,Wet Clean Bay,,0.25,pct,0.25,0.20,0.30
+2026-04-21T07:10:00Z,machine_WET-BENCH-01,temperature_reading,INFO,SC1 bath temperature nominal,Wet Clean Bay,,75.2,degC,75.0,73.0,77.0

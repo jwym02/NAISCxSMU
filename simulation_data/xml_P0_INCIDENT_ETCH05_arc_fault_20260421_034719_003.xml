@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<EventLog facility="semiconductor-fab" site="FAB-12" exported="2026-04-21T04:00:00Z">
+
+  <Event>
+    <timestamp>2026-04-21T03:47:19Z</timestamp>
+    <source>tool_ETCH-05</source>
+    <event_type>arc_fault</event_type>
+    <severity>CRITICAL</severity>
+    <message>RF arc detected in process chamber — plasma discharge abnormal. Recipe aborted immediately.</message>
+    <zone>Etch Bay 1</zone>
+    <wafer_lot>LOT-88528</wafer_lot>
+    <rf_power_w>1450</rf_power_w>
+    <dc_bias_v>-320</dc_bias_v>
+  </Event>
+  <Event>
+    <timestamp>2026-04-21T03:47:50Z</timestamp>
+    <source>tool_ETCH-05</source>
+    <event_type>chamber_vent</event_type>
+    <severity>CRITICAL</severity>
+    <message>ETCH-05 chamber vented after arc fault. RF generator powered down for inspection.</message>
+    <zone>Etch Bay 1</zone>
+  </Event>
+</EventLog>

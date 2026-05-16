@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<EventLog facility="semiconductor-fab" site="FAB-12" exported="2026-04-21T08:00:00Z">
+
+  <Event>
+    <timestamp>2026-04-21T07:33:11Z</timestamp>
+    <source>LEGACY_CTRL_SYS_7B</source>
+    <event_type>UNKNOWN_FAULT_TYPE_0x4F</event_type>
+    <severity>error</severity>
+    <message>%%FLT:0x4F ERR:timeout@REG[0x3A2] — ctx=fab_bay_3 unit=pcvd_chamber_x</message>
+    <raw_code>0x4F</raw_code>
+    <register>0x3A2</register>
+  </Event>
+  <CORRUPT_ELEMENT vendor="UNREGISTERED" payload="0x00 0xFF 0x3C"/>
+</EventLog>

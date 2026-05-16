@@ -1,0 +1,37 @@
+[
+  {
+    "timestamp": "2026-04-21T02:08:33Z",
+    "source": "tool_PECVD-01",
+    "event_type": "fire_alarm",
+    "severity": "CRITICAL",
+    "message": "Smoke detected in chamber exhaust duct \u2014 auto-shutoff triggered",
+    "zone": "Fab Bay 3",
+    "wafer_lot": "LOT-88521"
+  },
+  {
+    "timestamp": "2026-04-21T02:08:47Z",
+    "source": "tool_PECVD-01",
+    "event_type": "gas_leak",
+    "severity": "CRITICAL",
+    "message": "Silane (SiH4) concentration above LEL threshold (11%). Emergency purge initiated.",
+    "zone": "Fab Bay 3",
+    "wafer_lot": "LOT-88521",
+    "sensor_ppm": 3850
+  },
+  {
+    "timestamp": "2026-04-21T02:09:02Z",
+    "source": "machine_GAS-PANEL-01",
+    "event_type": "isolation_valve_closed",
+    "severity": "CRITICAL",
+    "message": "SiH4 isolation valve closed by interlock. Gas supply halted to Fab Bay 3.",
+    "zone": "Gas Cabinet A"
+  },
+  {
+    "timestamp": "2026-04-21T02:09:10Z",
+    "source": "machine_MES-SERVER-01",
+    "event_type": "production_hold",
+    "severity": "CRITICAL",
+    "message": "PRODUCTION HOLD: Fab Bay 3 evacuated. Tools: PECVD-01, PECVD-02, PECVD-03.",
+    "zone": "Fab Bay 3"
+  }
+]

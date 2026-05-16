@@ -1,0 +1,24 @@
+[
+  {
+    "timestamp": "2026-04-21T01:54:44Z",
+    "source": "tool_PECVD-02",
+    "event_type": "pressure_fault",
+    "severity": "WARNING",
+    "message": "Process pressure drifting above spec: 8.1 mTorr vs 7.0 mTorr target during oxide deposition.",
+    "zone": "Fab Bay 3",
+    "wafer_lot": "LOT-88510",
+    "target_mtorr": 7.0,
+    "actual_mtorr": 8.1
+  },
+  {
+    "timestamp": "2026-04-21T02:00:05Z",
+    "source": "tool_PECVD-02",
+    "event_type": "pressure_fault",
+    "severity": "ERROR",
+    "message": "Pressure deviation persisted > 5 min. Deposition step aborted. Lot flagged for review.",
+    "zone": "Fab Bay 3",
+    "wafer_lot": "LOT-88510",
+    "target_mtorr": 7.0,
+    "actual_mtorr": 8.4
+  }
+]

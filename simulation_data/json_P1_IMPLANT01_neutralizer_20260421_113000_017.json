@@ -1,0 +1,20 @@
+[
+  {
+    "timestamp": "2026-04-21T11:15:44Z",
+    "source": "tool_IMPLANT-01",
+    "event_type": "neutralizer_fault",
+    "severity": "WARNING",
+    "message": "Beam neutraliser current low: 0.3 mA vs 0.8 mA target. Possible Xe feed issue. Monitoring.",
+    "zone": "Implant Bay",
+    "wafer_lot": "LOT-88571"
+  },
+  {
+    "timestamp": "2026-04-21T11:30:00Z",
+    "source": "tool_IMPLANT-01",
+    "event_type": "neutralizer_fault",
+    "severity": "ERROR",
+    "message": "Neutraliser current dropped to zero. Wafer charge buildup risk. LOT-88571 processing paused.",
+    "zone": "Implant Bay",
+    "wafer_lot": "LOT-88571"
+  }
+]

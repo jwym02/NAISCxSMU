@@ -81,13 +81,29 @@ async def process_log_file(file_data: bytes, file_name: str, file_format: Option
         # ingest_log() returns a plain tuple: (job_id, file_key, is_duplicate)
         logger.info("▶▶▶ [PIPELINE:1] INGEST starting …")
         try:
-            _ingest_job_id, minio_key, is_duplicate = await ingest_log(file_data, file_name, file_format)
+            _ingest_job_id, minio_key, is_duplicate = await ingest_log(file_data, file_name, file_format, job_id=job_id)
             if is_duplicate:
                 logger.warning("▶▶▶ [PIPELINE:1] duplicate file detected: %s", file_name)
                 errors.append("File is duplicate (content already processed)")
 
             logger.info("▶▶▶ [PIPELINE:1] INGEST OK  minio_key=%s  duplicate=%s",
                         minio_key, is_duplicate)
+
+            # Record file metadata in raw_logs so the review UI can retrieve the
+            # original file from MinIO by looking up file_name for this job_id.
+            try:
+                import hashlib
+                file_hash = hashlib.sha256(file_data).hexdigest()
+                await insert_raw_log(
+                    job_id=job_id,
+                    timestamp=start_time,
+                    file_name=file_name,
+                    file_format=file_format or "unknown",
+                    raw_content="",
+                    file_hash=file_hash,
+                )
+            except Exception as _e:
+                logger.warning("▶▶▶ [PIPELINE:1] raw_logs insert failed (non-critical): %s", _e)
 
         except Exception as e:
             logger.exception("▶▶▶ [PIPELINE:1] INGEST FAILED: %s", e)
@@ -184,7 +200,8 @@ async def process_log_file(file_data: bytes, file_name: str, file_format: Option
                     # Map topic string to EventPriority enum
                     priority = EventPriority(topic)
                     source = event.get("source", "unknown")
-                    await kafka_client.send_event(priority, event, key=source)
+                    event_to_send = {**event, "job_id": job_id}
+                    await kafka_client.send_event(priority, event_to_send, key=source)
                     kafka_sent_count += 1
                 except (ValueError, Exception) as e:
                     logger.warning(f"Failed to send event to Kafka topic {topic}: {e}")

@@ -151,6 +151,23 @@ async def init_schema():
         """)
         logger.info("Created review_queue_status table")
 
+        # Create categories table (reviewer-managed list of valid event categories)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS categories (
+                name TEXT PRIMARY KEY,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        # Seed the built-in categories so the dropdown is always populated
+        await conn.execute("""
+            INSERT INTO categories (name) VALUES
+                ('thermal'), ('mechanical'), ('electrical'), ('gas_leak'),
+                ('contamination'), ('process_drift'), ('safety'), ('software'),
+                ('maintenance'), ('unknown')
+            ON CONFLICT (name) DO NOTHING;
+        """)
+        logger.info("Created and seeded categories table")
+
         # Create indexes for common queries
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_raw_logs_timestamp ON raw_logs (timestamp DESC)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_raw_logs_file_hash ON raw_logs (file_hash)")
@@ -538,3 +555,35 @@ async def get_event_with_routing(job_id: str) -> Optional[Dict[str, Any]]:
     except Exception as e:
         logger.error(f"Failed to query event with routing: {e}")
         return None
+
+
+# ── Category Registry ─────────────────────────────────────────────────────────
+
+async def get_all_categories() -> List[str]:
+    """Return all known event categories, sorted alphabetically."""
+    pool = await get_pool()
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("SELECT name FROM categories ORDER BY name")
+        return [row["name"] for row in rows]
+    except Exception as e:
+        logger.error(f"Failed to fetch categories: {e}")
+        return []
+
+
+async def insert_category(name: str) -> bool:
+    """
+    Insert a new category. Returns True if created, False if it already existed.
+    The caller is responsible for validating the name before calling this.
+    """
+    pool = await get_pool()
+    try:
+        async with pool.acquire() as conn:
+            result = await conn.execute(
+                "INSERT INTO categories (name) VALUES ($1) ON CONFLICT (name) DO NOTHING",
+                name,
+            )
+        return result == "INSERT 0 1"
+    except Exception as e:
+        logger.error(f"Failed to insert category '{name}': {e}")
+        return False

@@ -137,7 +137,55 @@ RULES_TABLE    = os.getenv("DYNAMODB_TABLE_RULES", "normalization-rules")
 REVIEW_TABLE   = os.getenv("DYNAMODB_TABLE_REVIEW", "human-review-queue")
 CONFIDENCE_THRESHOLD = float(os.getenv("NORMALIZE_CONFIDENCE_THRESHOLD", "0.85"))
 
-async def call_ai(record: dict, category_hint: str | None = None) -> dict:
+# Default categories if none exist in database
+DEFAULT_CATEGORIES = [
+    "thermal", "mechanical", "electrical", "gas_leak", "contamination",
+    "process_drift", "safety", "software", "maintenance", "unknown"
+]
+
+async def get_available_categories() -> list[str]:
+    """
+    Fetch all unique categories from DynamoDB rules table.
+    Falls back to DEFAULT_CATEGORIES if query fails.
+    """
+    try:
+        response = dynamo_client.scan(
+            TableName=RULES_TABLE,
+            ProjectionExpression="category"
+        )
+        items = response.get("Items", [])
+        categories = set()
+        for item in items:
+            if "category" in item and "S" in item["category"]:
+                cat = item["category"]["S"]
+                if cat and cat != "unknown":
+                    categories.add(cat)
+        
+        # Always include default categories and unknown
+        categories.update(DEFAULT_CATEGORIES)
+        categories.add("unknown")
+        
+        result = sorted(list(categories))
+        logging.debug(f"Fetched {len(result)} categories from DynamoDB: {result}")
+        return result
+    except Exception as e:
+        logging.warning(f"Failed to fetch categories from DynamoDB: {e}. Using defaults.")
+        return DEFAULT_CATEGORIES
+
+async def call_ai(record: dict, category_hint: str | None = None, available_categories: list[str] | None = None) -> dict:
+    """
+    Call AI model to categorize and analyze a log record.
+    
+    Args:
+        record: Log record dict with timestamp, source, event_type, severity, message
+        category_hint: Optional category from DynamoDB rules to guide AI
+        available_categories: List of valid category options from database
+    """
+    if available_categories is None:
+        available_categories = await get_available_categories()
+    
+    categories_str = "|".join(available_categories)
+    
     hint_section = ""
     if category_hint and category_hint != "unknown":
         hint_section = f"""
@@ -155,23 +203,11 @@ Message: {record.get('message', '')}{hint_section}
 You MUST respond with ONLY a valid JSON object. No explanation, no markdown, no code blocks.
 Use exactly these keys:
 {{
-  "category": "thermal|mechanical|electrical|gas_leak|contamination|process_drift|safety|software|maintenance|unknown",
+  "category": "{categories_str}",
   "root_cause": "1-2 sentences describing the most likely root cause based on the message",
   "recommended_action": "specific action an engineer should take (e.g. 'Inspect chamber O-rings and recheck MFC calibration')",
   "confidence": <number 0.0-1.0>
 }}
-
-Category guide:
-- thermal: temperature excursions, overheating, cooling failures, heater faults
-- mechanical: wafer handling errors, robot arm faults, valve/pump failures, collisions
-- electrical: power faults, RF arc, plasma instability, voltage/current anomalies
-- gas_leak: gas flow anomalies, MFC deviations, pressure drops, interlock trips
-- contamination: particle counts, chemical spills, cross-contamination alerts
-- process_drift: out-of-spec etch/deposition rates, yield deviations, recipe errors
-- safety: fire alarms, evacuation events, toxic gas detectors, emergency stops
-- software: MES errors, recipe load failures, communication timeouts, software crashes
-- maintenance: PM due, calibration needed, scheduled downtime, tool qualification
-- unknown: only if the message provides no useful information
 
 For confidence: 0.9+ if cause is explicit in the message, 0.7-0.9 if strongly implied, 0.5-0.7 if inferred, <0.5 if ambiguous."""
 
@@ -199,6 +235,11 @@ For confidence: 0.9+ if cause is explicit in the message, 0.7-0.9 if strongly im
             result["confidence"] = max(0.0, min(1.0, result["confidence"]))
         else:
             result["confidence"] = 0.5  # Default mid-range confidence if not provided
+        
+        # Ensure category is in available categories, default to unknown if not
+        if result.get("category") not in available_categories:
+            logging.warning(f"AI returned unknown category '{result.get('category')}', defaulting to 'unknown'")
+            result["category"] = "unknown"
         
         return result
     except Exception as e:
@@ -281,11 +322,14 @@ def combine_and_score(record: dict, ai_result: dict, rule: dict | None):
 async def normalize_log(parsed_records: list) -> dict:
     normalized_records = []
     review_queue_items = []
+    
+    # Fetch available categories once per batch
+    available_categories = await get_available_categories()
 
     for record in parsed_records:
         rule          = lookup_rule(record)
         category_hint = rule.get("category") if rule and rule.get("category") else None
-        ai_result     = await call_ai(record, category_hint=category_hint)
+        ai_result     = await call_ai(record, category_hint=category_hint, available_categories=available_categories)
         final, confidence, review_reason = combine_and_score(record, ai_result, rule)
 
         requires_review = (

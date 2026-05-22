@@ -240,6 +240,7 @@ async def process_log_file(file_data: bytes, file_name: str, file_format: Option
                         confidence_score=float(ai.get("confidence", 0.0)),
                         requires_review=event.get("requires_review", False),
                         review_reason=event.get("review_reason") or "",
+                        novelty_score=event.get("novelty_score"),
                     )
                     if ok:
                         ne_ok += 1

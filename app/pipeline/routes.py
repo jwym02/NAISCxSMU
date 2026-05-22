@@ -163,6 +163,7 @@ async def get_job(job_id: str):
             "ai_root_cause": event_info.get("ai_root_cause"),
             "ai_recommended_action": event_info.get("ai_recommended_action"),
             "confidence_score": event_info.get("confidence_score"),
+            "novelty_score": event_info.get("novelty_score"),
         }
 
     except HTTPException:

@@ -6,7 +6,9 @@ import json
 import logging
 import uuid
 import httpx
+import numpy as np
 from collections import defaultdict
+from sklearn.ensemble import IsolationForest
 from app.shared.dynamo import dynamo_client
 
 AI_KEY         = os.getenv("AI_KEY")
@@ -458,6 +460,106 @@ Mark is_anomaly=true if you observe any of:
         return None
 
 
+# ── Isolation Forest: online novelty scoring ──────────────────────────────────
+#
+# Trains an IsolationForest model incrementally as events arrive.
+# Every normalized event receives a novelty_score (0.0 = normal, 1.0 = highly anomalous).
+# Complements the LLM: the LLM understands semantics; the IF detects statistical outliers.
+#
+# Design:
+#   - Features are fully numerical — severity level, confidence, category, field presence,
+#     message length, review flag.
+#   - Model is retrained every _IF_RETRAIN_EVERY events once _IF_MIN_SAMPLES is reached.
+#   - Until enough data is collected, novelty_score is None (model warming up).
+#   - A score above _IF_ALERT_THRESHOLD forces requires_review=True regardless of LLM confidence.
+
+_IF_MIN_SAMPLES   = 10   # events needed before first fit
+_IF_RETRAIN_EVERY = 20   # refit every N new events after that
+_IF_ALERT_THRESHOLD = 0.58  # novelty_score above this → escalate to review
+
+_if_model: IsolationForest | None = None
+_if_buffer: list[list[float]] = []   # accumulates feature vectors across all batches
+
+_SEVERITY_ENC = {
+    "critical": 4, "error": 3, "warning": 2, "warn": 2,
+    "info": 1, "debug": 0, "unknown": 0,
+}
+_CATEGORY_ENC = {
+    "safety": 0, "electrical": 1, "thermal": 2, "gas_leak": 3,
+    "mechanical": 4, "contamination": 5, "process_drift": 6,
+    "software": 7, "maintenance": 8, "unknown": 9,
+}
+
+
+def _extract_features(record: dict, ai_result: dict, confidence: float) -> list[float]:
+    """
+    Build a fixed-length numerical feature vector for one event.
+
+    Features (7 dimensions):
+      0  severity_enc     — severity level as integer (0–4)
+      1  confidence       — final blended confidence score (0.0–1.0)
+      2  category_enc     — category as integer (0–9)
+      3  has_source       — 1 if source is known, else 0
+      4  has_event_type   — 1 if event_type is known, else 0
+      5  msg_length_norm  — message length capped and normalised to [0, 1]
+      6  requires_review  — 1 if LLM+rules already flagged for review, else 0
+    """
+    severity  = (record.get("severity") or "unknown").lower()
+    category  = (ai_result.get("category") or "unknown").lower()
+    message   = record.get("message") or ""
+
+    return [
+        float(_SEVERITY_ENC.get(severity, 0)),
+        float(np.clip(confidence, 0.0, 1.0)),
+        float(_CATEGORY_ENC.get(category, 9)),
+        1.0 if (record.get("source") or "unknown") != "unknown" else 0.0,
+        1.0 if (record.get("event_type") or "unknown") != "unknown" else 0.0,
+        float(min(len(message) / 500.0, 1.0)),
+        1.0 if record.get("requires_review", False) else 0.0,
+    ]
+
+
+def _score_novelty(features: list[float]) -> float | None:
+    """
+    Add features to the buffer, optionally refit the model, and return a novelty score.
+
+    Returns:
+        float in [0.0, 1.0] — higher = more anomalous (model sees this as an outlier).
+        None  — not enough data yet (model warming up).
+
+    The raw IsolationForest output is score_samples() which returns negative floats;
+    more negative = more anomalous.  We invert and clip to [0, 1] so that:
+        0.0  → perfectly normal (model has seen many events like this)
+        1.0  → highly anomalous (statistically unlike anything seen before)
+    """
+    global _if_model, _if_buffer
+
+    _if_buffer.append(features)
+    n = len(_if_buffer)
+
+    # Fit (or refit) the model when we cross the minimum threshold or hit a retrain tick
+    should_fit = (n == _IF_MIN_SAMPLES) or (n > _IF_MIN_SAMPLES and n % _IF_RETRAIN_EVERY == 0)
+    if should_fit:
+        _if_model = IsolationForest(
+            n_estimators=100,
+            contamination=0.1,   # expect ~10 % of events to be anomalous
+            random_state=42,
+        )
+        _if_model.fit(np.array(_if_buffer))
+        logging.info(
+            "[IsolationForest] model %s on %d events",
+            "fitted" if n == _IF_MIN_SAMPLES else "refitted", n,
+        )
+
+    if _if_model is None:
+        return None   # warming up — not enough events yet
+
+    raw = _if_model.score_samples(np.array([features]))[0]
+    # score_samples returns values roughly in [-0.8, 0.1]; invert so anomaly → high score
+    novelty = float(np.clip(-raw, 0.0, 1.0))
+    return round(novelty, 4)
+
+
 # ── Main pipeline entry point ─────────────────────────────────────────────────
 
 async def normalize_log(parsed_records: list) -> dict:
@@ -514,11 +616,31 @@ async def normalize_log(parsed_records: list) -> dict:
             review_reason is not None
         )
 
+        # ── Isolation Forest novelty scoring ──────────────────────────────────
+        # Score the event against the statistical distribution of all events seen
+        # so far this session.  A high novelty_score means the IF model considers
+        # this event an outlier — independently of what the LLM decided.
+        features      = _extract_features(record, final, confidence)
+        novelty_score = _score_novelty(features)
+
+        # If ML flags this as highly anomalous, escalate to review regardless of
+        # LLM confidence — the two systems disagree, which is itself a signal.
+        if novelty_score is not None and novelty_score >= _IF_ALERT_THRESHOLD:
+            requires_review = True
+            ml_reason = f"ML anomaly detected (novelty_score={novelty_score:.2f})"
+            review_reason = (review_reason + " | " + ml_reason) if review_reason else ml_reason
+            logging.info(
+                "[IsolationForest] anomaly — source=%s  category=%s  "
+                "confidence=%.2f  novelty_score=%.4f",
+                record.get("source"), final.get("category"), confidence, novelty_score,
+            )
+
         normalized_records.append({
             **record,
-            "ai_normalized":  final,
+            "ai_normalized":   final,
             "requires_review": requires_review,
-            "review_reason":   review_reason
+            "review_reason":   review_reason,
+            "novelty_score":   novelty_score,   # None until model warms up (≥10 events)
         })
 
         if requires_review:
@@ -527,6 +649,7 @@ async def normalize_log(parsed_records: list) -> dict:
                 "original_record": record,
                 "ai_suggestion":   final,
                 "confidence":      confidence,
+                "novelty_score":   novelty_score,
                 "review_reason":   review_reason or "Low confidence in categorization"
             })
 

@@ -107,6 +107,7 @@ async def init_schema():
                 ai_root_cause TEXT,
                 ai_recommended_action TEXT,
                 confidence_score FLOAT,
+                novelty_score FLOAT,
                 requires_review BOOLEAN DEFAULT FALSE,
                 review_reason TEXT,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -184,6 +185,12 @@ async def init_schema():
             ON CONFLICT (name) DO NOTHING;
         """)
         logger.info("Created and seeded categories table")
+
+        # Idempotent column migration — adds novelty_score if this is an existing DB
+        await conn.execute("""
+            ALTER TABLE normalized_events ADD COLUMN IF NOT EXISTS novelty_score FLOAT;
+        """)
+        logger.info("Ensured novelty_score column on normalized_events")
 
         # Create indexes for common queries
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_raw_logs_timestamp ON raw_logs (timestamp DESC)")
@@ -266,12 +273,13 @@ async def insert_normalized_event(
     confidence_score: float,
     requires_review: bool,
     review_reason: Optional[str] = None,
+    novelty_score: Optional[float] = None,
 ) -> bool:
     """Insert a normalized event."""
     logger.info(
         "▶▶▶ [DB] insert_normalized_event called  job_id=%s  source=%s  severity=%s  "
-        "requires_review=%s  confidence=%.2f",
-        job_id, source, severity, requires_review, confidence_score,
+        "requires_review=%s  confidence=%.2f  novelty=%.4f",
+        job_id, source, severity, requires_review, confidence_score, novelty_score or 0.0,
     )
     try:
         pool = await get_pool()
@@ -284,14 +292,14 @@ async def insert_normalized_event(
                 INSERT INTO normalized_events (
                     job_id, timestamp, source, event_type, severity, message,
                     ai_category, ai_root_cause, ai_recommended_action,
-                    confidence_score, requires_review, review_reason
+                    confidence_score, novelty_score, requires_review, review_reason
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                 ON CONFLICT (job_id, timestamp) DO NOTHING
             """,
             job_id, timestamp, source, event_type, severity, message,
             ai_category, ai_root_cause, ai_recommended_action,
-            confidence_score, requires_review, review_reason,
+            confidence_score, novelty_score, requires_review, review_reason,
             )
         logger.info("▶▶▶ [DB] insert_normalized_event OK  job_id=%s", job_id)
         return True

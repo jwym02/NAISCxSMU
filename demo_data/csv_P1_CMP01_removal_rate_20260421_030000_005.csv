@@ -1,0 +1,2 @@
+timestamp,source,event_type,severity,message,zone,wafer_lot,value,unit,setpoint,limit_low,limit_high
+2026-04-21T03:00:00Z,tool_CMP-01,removal_rate_reading,INFO,Cu CMP removal rate on target,CMP Bay 1,LOT-88520,520.0,A/min,500.0,450.0,550.0

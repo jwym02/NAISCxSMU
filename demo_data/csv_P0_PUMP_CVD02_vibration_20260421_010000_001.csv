@@ -1,0 +1,2 @@
+timestamp,source,event_type,severity,message,zone,value,unit,limit_high
+2026-04-21T01:00:00Z,device_PUMP-CVD-02,pump_failure,CRITICAL,Dry pump motor seized. Bearing failure confirmed — loud grinding followed by complete stoppage. Smoke visible from motor housing. Emergency shutdown triggered. CVD02 chamber vented to atmosphere.,Fab Bay 2,12.4,mm/s,3.5

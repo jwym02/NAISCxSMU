@@ -1,0 +1,13 @@
+<EventLog facility="semiconductor-fab" site="FAB-12" exported="2026-04-21T03:00:00Z">
+
+  <Event>
+    <timestamp>2026-04-21T02:55:44Z</timestamp>
+    <source>tool_ETCH-03</source>
+    <event_type>mechanical_fault</event_type>
+    <severity>CRITICAL</severity>
+    <message>Wafer transfer robot arm collision on slot 3. Wafer dropped and shattered on chamber floor. E-stop triggered. Chamber isolated for debris inspection and clean.</message>
+    <wafer_lot>LOT-88514</wafer_lot>
+    <recipe>POLY-GATE-ETCH-v7</recipe>
+  </Event>
+
+</EventLog>

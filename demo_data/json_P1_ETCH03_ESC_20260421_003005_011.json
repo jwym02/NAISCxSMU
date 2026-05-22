@@ -1,0 +1,13 @@
+[
+  {
+    "timestamp": "2026-04-21T00:30:05Z",
+    "source": "tool_ETCH-03",
+    "event_type": "thermal_fault",
+    "severity": "ERROR",
+    "message": "Chamber wall temperature reached 185C, exceeding 150C safety limit. Cooling water flow at 35% of nominal. Thermal shutdown sequence initiated to prevent wafer damage.",
+    "zone": "Etch Bay 1",
+    "wafer_lot": "LOT-88503",
+    "temp_c": 185,
+    "limit_c": 150
+  }
+]

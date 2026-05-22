@@ -5,6 +5,7 @@
 | Port | Component |
 |------|-----------|
 | 3000 | Frontend (React/Vite) |
+| 5050 | pgAdmin (Database Browser) |
 | 5432 | TimescaleDB |
 | 6379 | Redis |
 | 8000 | DynamoDB |
@@ -85,18 +86,26 @@ docker compose ps
 
 ## Understanding the Stack (Simple Version)
 
-### TimescaleDB — The Database
+### TimescaleDB — The Main Database
 
 **What does it do?**
 
-- Stores all your log data (like an Excel spreadsheet, but for databases)
+- Stores **all log events** (like an Excel spreadsheet, but for databases)
+- Stores **review queue items** (events flagged by AI for human review)
+- Stores **review decisions** (what engineers approved/rejected)
 - Organized to handle lots of time-stamped events (perfect for logs with timestamps)
 - Keeps everything organized in tables
+
+**Tables:**
+- `log_events` — All incoming logs
+- `normalized_events` — Parsed + AI-categorized logs (with `requires_review` flag)
+- `review_queue_status` — Track which items have been reviewed
 
 **Think of it like:**
 
 - A filing cabinet on your computer
 - Each log event gets filed and labeled by time
+- A special section for items awaiting review (the "pending" tray)
 - You can search and sort through thousands of logs instantly
 
 **Setup:**
@@ -105,6 +114,30 @@ docker compose ps
 - ✅ Data is on your machine only — Your teammate's database is separate from yours
 - ✅ No manual work needed — All tables and folders are created automatically
 - Location: `localhost:5432` (password: `logparser_secret`)
+
+---
+
+### DynamoDB — The Feedback Loop Storage
+
+**What does it do?**
+
+- Stores **normalization rules** (field aliases for different machine types)
+- Stores **confidence boosts** (feedback from previous approvals — "this machine always has thermal issues")
+- Stores **AI examples** (few-shot learning — "here's how we classified thermal events before")
+
+**Important:** Does NOT store review queue items. That's in TimescaleDB.
+
+**Tables:**
+- `normalization-rules` — Field name mappings and confidence adjustments
+- `approved-events` — Previously approved events for RAG (few-shot learning)
+
+**Think of it like:**
+
+- A notebook where the AI learns from past decisions
+- Rules that say "for Machine X, call this field 'timestamp' even though it says 'ts'"
+- Confidence scores that say "if Machine X reports thermal, it's 95% likely to be real"
+
+**Access:** http://localhost:8000 (DynamoDB UI — mainly for debugging)
 
 ---
 
@@ -144,16 +177,57 @@ docker compose ps
 
 | Service              | URL                           | What It Does                                                  |
 | -------------------- | ----------------------------- | ------------------------------------------------------------- |
+| **pgAdmin**          | http://localhost:5050         | **Visual database browser** — browse tables, run queries      |
 | **Pipeline API**     | http://localhost:8080/docs    | Upload log files here                                         |
 | **Query API**        | http://localhost:8081/docs    | Ask questions about logs using natural language               |
 | **WebSocket Alerts** | ws://localhost:8083/ws/alerts | Real-time notifications (P0/P1 urgent logs)                   |
 | **Kafka UI**         | http://localhost:8090         | Visualize message flow (for debugging)                        |
 | **MinIO Console**    | http://localhost:9001         | Browse uploaded files (login: `minioadmin` / `minioadmin123`) |
-| **TimescaleDB**      | localhost:5432                | Database (user: `logparser` / password: `logparser_secret`)   |
-| **DynamoDB**         | http://localhost:8000         | Database for low-confidence events (for data review)          |
+| **TimescaleDB**      | localhost:5432                | **All log data + review queue** (user: `logparser` / password: `logparser_secret`) |
+| **DynamoDB**         | http://localhost:8000         | **Feedback loop rules only** (AI confidence boosts, aliases)   |
 | **Redis**            | localhost:6379                | Duplicate detection (caching)                                 |
 
-**Quick tip:** Open pipeline and query APIs in your browser — they have interactive documentation!
+**Quick tip:** Open pipeline and query APIs in your browser — they have interactive documentation! pgAdmin is at http://localhost:5050 for visual database browsing.
+
+---
+
+## Using pgAdmin (Visual Database Browser)
+
+**Access:** http://localhost:5050
+
+**Login:**
+- Email: `admin@example.com`
+- Password: `admin`
+
+**First Time Setup (One-time):**
+
+1. Click **"Add New Server"**
+2. **General tab:**
+   - Name: `logparser-db`
+3. **Connection tab:**
+   - Hostname: `timescaledb`
+   - Port: `5432`
+   - Maintenance database: `logparser_db`
+   - Username: `logparser`
+   - Password: `logparser_secret`
+   - Click **Save**
+
+**Now you can:**
+
+- Browse tables in the left panel
+- View table structure (columns, types)
+- Run SQL queries with the Query Editor
+- Export data
+- Monitor database performance
+
+**Quick Query (Example):**
+
+1. Right-click database → **Query Tool**
+2. Paste this:
+   ```sql
+   SELECT * FROM log_events LIMIT 20;
+   ```
+3. Click the play button to execute
 
 ---
 
@@ -220,7 +294,22 @@ docker compose down
 
 # Stop everything AND delete all data (fresh start)
 docker compose down -v
+
+# Use the provided reset script (deletes TimescaleDB volume, restarts stack)
+./reset.sh
 ```
+
+**About reset.sh:**
+
+- Gracefully shuts down all services (30-second timeout)
+- **Deletes the TimescaleDB volume** — all log events, review queue, and review decisions are wiped clean
+- **Keeps DynamoDB data** (feedback rules persist across resets, so AI learns from previous feedback)
+- Restarts the stack from scratch
+- Waits for TimescaleDB to become healthy before completing
+
+**Why keep DynamoDB data?** So your feedback loop rules (aliases and confidence boosts) survive a reset. If you want to clear everything including feedback, run `docker compose down -v` instead.
+
+**Why does TimescaleDB need a reset?** After many test uploads, old `review_queue_status` entries accumulate even after their corresponding events are no longer marked `requires_review=true`. A full volume delete cleans this up completely.
 
 ---
 

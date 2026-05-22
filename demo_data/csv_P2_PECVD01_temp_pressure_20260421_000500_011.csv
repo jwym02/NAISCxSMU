@@ -1,0 +1,2 @@
+timestamp,source,event_type,severity,message,zone,wafer_lot,value,unit,setpoint,limit_low,limit_high
+2026-04-21T00:05:00Z,tool_PECVD-01,temperature_reading,INFO,Chamber wall temperature within spec,Fab Bay 3,LOT-88500,385.2,degC,385.0,375.0,395.0

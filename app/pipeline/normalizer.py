@@ -16,7 +16,7 @@ AI_MODEL       = os.getenv("AI_MODEL", "nvidia/nemotron-nano-9b-v2")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 RULES_TABLE    = os.getenv("DYNAMODB_TABLE_RULES", "normalization-rules")
 REVIEW_TABLE   = os.getenv("DYNAMODB_TABLE_REVIEW", "human-review-queue")
-CONFIDENCE_THRESHOLD = float(os.getenv("NORMALIZE_CONFIDENCE_THRESHOLD", "0.85"))
+CONFIDENCE_THRESHOLD = float(os.getenv("NORMALIZE_CONFIDENCE_THRESHOLD", "0.70"))
 
 DEFAULT_CATEGORIES = [
     "thermal", "mechanical", "electrical", "gas_leak", "contamination",
@@ -473,9 +473,9 @@ Mark is_anomaly=true if you observe any of:
 #   - Until enough data is collected, novelty_score is None (model warming up).
 #   - A score above _IF_ALERT_THRESHOLD forces requires_review=True regardless of LLM confidence.
 
-_IF_MIN_SAMPLES   = 10   # events needed before first fit
+_IF_MIN_SAMPLES   = 50   # events needed before first fit — keeps IF silent during small demos
 _IF_RETRAIN_EVERY = 20   # refit every N new events after that
-_IF_ALERT_THRESHOLD = 0.58  # novelty_score above this → escalate to review
+_IF_ALERT_THRESHOLD = 0.72  # novelty_score above this → escalate to review
 
 _if_model: IsolationForest | None = None
 _if_buffer: list[list[float]] = []   # accumulates feature vectors across all batches

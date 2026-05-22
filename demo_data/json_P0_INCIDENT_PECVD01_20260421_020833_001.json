@@ -1,0 +1,11 @@
+[
+  {
+    "timestamp": "2026-04-21T02:08:33Z",
+    "source": "tool_PECVD-01",
+    "event_type": "fire_alarm",
+    "severity": "CRITICAL",
+    "message": "Smoke detected in chamber exhaust duct \u2014 auto-shutoff triggered",
+    "zone": "Fab Bay 3",
+    "wafer_lot": "LOT-88521"
+  }
+]

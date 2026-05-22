@@ -138,6 +138,55 @@ DATABASE_SCHEMA = """
 """
 
 
+def _sanitize_sql(sql: str) -> str:
+    """
+    Patch common LLM hallucinations before sending SQL to PostgreSQL.
+
+    Smaller models frequently truncate built-in function names or wrap the
+    output in markdown fences.  We fix the known patterns here so that a
+    slightly-wrong LLM response still executes rather than blowing up with
+    a confusing "column does not exist" error.
+    """
+    import re
+
+    # 1. Strip markdown code fences  (```sql ... ``` or ``` ... ```)
+    sql = re.sub(r"```(?:sql)?\s*", "", sql, flags=re.IGNORECASE).strip("`").strip()
+
+    # 2. Fix truncated / hallucinated PostgreSQL function names
+    #    Pattern: whole-word match so we don't clobber e.g. "upper_limit"
+    truncations = {
+        r"\bupp\s*\("    : "UPPER(",   # upp(  → UPPER(
+        r"\buppr\s*\("   : "UPPER(",   # uppr( → UPPER(
+        r"\blow\s*\("    : "LOWER(",   # low(  → LOWER(
+        r"\blowr\s*\("   : "LOWER(",   # lowr( → LOWER(
+        r"\blen\s*\("    : "LENGTH(",  # len(  → LENGTH(
+        r"\bsubstr\s*\(" : "SUBSTRING(", # sometimes emitted without the full name
+        r"\bconcat_ws\b" : "CONCAT",   # not supported in all PG contexts
+        r"\bnow\(\s*\)"  : "NOW()",    # normalise spacing
+        r"\bcount\(\s*1\s*\)" : "COUNT(*)",  # COUNT(1) → COUNT(*)
+    }
+    for pattern, replacement in truncations.items():
+        sql = re.sub(pattern, replacement, sql, flags=re.IGNORECASE)
+
+    # 3. Ensure severity comparisons are always upper-cased
+    #    e.g.  severity = 'critical'  →  UPPER(severity) = 'CRITICAL'
+    def _fix_severity_literal(m):
+        val = m.group(1).upper()
+        return f"UPPER(severity) = '{val}'"
+    sql = re.sub(
+        r"\bseverity\s*=\s*'(critical|error|warning|info|debug)'",
+        _fix_severity_literal,
+        sql,
+        flags=re.IGNORECASE,
+    )
+
+    # 4. Remove any trailing semicolon (asyncpg doesn't need it and some
+    #    drivers reject multi-statement strings)
+    sql = sql.rstrip("; \t\n")
+
+    return sql
+
+
 def _generate_smart_fallback_sql(nl_query: str, time_range_hours: int = 24, limit: int = 100) -> str:
     """
     Generate SQL by parsing keywords from natural language query.
@@ -327,7 +376,8 @@ SQL Query:"""
                     sql_query = _generate_smart_fallback_sql(nl_query, time_range_hours, limit)
                 else:
                     sql_query = sql_query.strip()
-                    
+                    sql_query = _sanitize_sql(sql_query)
+
                     # Validate LLM query - check for common mistakes
                     # If query mentions 'info'/'error'/'critical' but filters by event_type, fall back
                     query_lower = nl_query.lower()
@@ -441,9 +491,15 @@ async def query(request: QueryRequest):
     sql_query = await generate_sql(request.query, request.limit, request.time_range_hours)
     logger.info(f"Generated SQL:\n{sql_query}")
     
-    # Execute query
+    # Execute query — retry with smart fallback if LLM SQL fails at runtime
     logger.info(f"Executing query...")
-    rows = await execute_query(sql_query)
+    try:
+        rows = await execute_query(sql_query)
+    except HTTPException as exc:
+        logger.warning(f"[query] LLM SQL failed at execution ({exc.detail}), retrying with smart fallback")
+        sql_query = _generate_smart_fallback_sql(request.query, request.time_range_hours, request.limit)
+        logger.info(f"[query] Fallback SQL: {sql_query}")
+        rows = await execute_query(sql_query)
     logger.info(f"✓ Query completed. Rows returned: {len(rows)}")
     
     # Calculate execution time

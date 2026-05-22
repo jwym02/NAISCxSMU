@@ -10,8 +10,10 @@ import {
   fetchCategories,
   addCategory,
   submitReview,
+  fetchTrendAlerts,
   Stats,
   ReviewItem,
+  TrendAlert,
 } from "../api/pipeline";
 
 // ── ReviewCard ────────────────────────────────────────────────────────────────
@@ -445,8 +447,11 @@ export function Dashboard() {
   const [error,          setError]          = useState<string | null>(null);
   const [reviewOpen,     setReviewOpen]     = useState(false);
   const [retryCount,     setRetryCount]     = useState(0);
+  const [trendAlerts,    setTrendAlerts]    = useState<TrendAlert[]>([]);
+  const [alertsOpen,     setAlertsOpen]     = useState(false);
   const wsRef            = useRef<WebSocket | null>(null);
   const pollingRef       = useRef<ReturnType<typeof setInterval> | null>(null);
+  const alertsRef        = useRef<HTMLDivElement | null>(null);
 
   // Exponential backoff retry logic
   const loadStats = useCallback(async (attempt = 0) => {
@@ -479,12 +484,33 @@ export function Dashboard() {
     }
   }, []);
 
+  const loadTrendAlerts = useCallback(async () => {
+    try {
+      const alerts = await fetchTrendAlerts();
+      setTrendAlerts(alerts);
+    } catch {
+      // Silently fail — trend alerts are non-critical
+    }
+  }, []);
+
+  // Close trend alerts dropdown when clicking outside
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (alertsRef.current && !alertsRef.current.contains(e.target as Node)) {
+        setAlertsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleOutsideClick);
+    return () => document.removeEventListener("mousedown", handleOutsideClick);
+  }, []);
+
   // Initial load + polling + WebSocket
   useEffect(() => {
     let isMounted = true;
 
     // Start initial load
     loadStats();
+    loadTrendAlerts();
 
     // Setup WebSocket
     const setupWs = () => {
@@ -538,6 +564,7 @@ export function Dashboard() {
     pollingRef.current = setInterval(() => {
       if (isMounted) {
         loadStats();
+        loadTrendAlerts();
       }
     }, POLLING_INTERVAL);
 
@@ -551,12 +578,15 @@ export function Dashboard() {
         clearInterval(pollingRef.current);
       }
     };
-  }, [loadStats]);
+  }, [loadStats, loadTrendAlerts]);
 
   const handleUploaded = () => {
     // Refresh stats after a brief delay so the backend has time to process
-    setTimeout(() => loadStats(), 1500);
+    setTimeout(() => { loadStats(); loadTrendAlerts(); }, 1500);
   };
+
+  const resolveAlert = (id: number) =>
+    setTrendAlerts(prev => prev.filter(a => a.id !== id));
 
   const pendingCount = stats?.events_in_review ?? 0;
 
@@ -606,8 +636,57 @@ export function Dashboard() {
           </p>
         )}
 
-        {/* Review Queue button */}
+        {/* Action bar — Trend Alerts (left) + Review Queue (right) */}
         <div className="review-queue-bar">
+
+          {/* Trend Alerts dropdown */}
+          <div className="trend-alert-wrapper" ref={alertsRef}>
+            <button
+              className={`btn-trend-alerts${trendAlerts.length > 0 ? " has-alerts" : ""}`}
+              onClick={() => setAlertsOpen(o => !o)}
+            >
+              ⚠ Trend Alerts
+              {trendAlerts.length > 0 && (
+                <span className="review-badge alert-badge">{trendAlerts.length}</span>
+              )}
+            </button>
+
+            {alertsOpen && (
+              <div className="trend-alerts-dropdown">
+                {trendAlerts.length === 0 ? (
+                  <p className="no-alerts">No active trend alerts</p>
+                ) : (
+                  trendAlerts.map(alert => (
+                    <div
+                      key={alert.id}
+                      className={`alert-item severity-${alert.predicted_severity}`}
+                    >
+                      <div className="alert-header">
+                        <span className="alert-machine">{alert.machine}</span>
+                        <span className={`alert-severity-badge ${alert.predicted_severity}`}>
+                          {alert.predicted_severity.toUpperCase()}
+                        </span>
+                      </div>
+                      <p className="alert-pattern">{alert.pattern}</p>
+                      <p className="alert-detail">⏱ {alert.estimated_time_to_critical}</p>
+                      <p className="alert-detail">→ {alert.recommended_action}</p>
+                      <p className="alert-confidence">
+                        Confidence: {Math.round(alert.confidence * 100)}%
+                      </p>
+                      <button
+                        className="btn-resolve"
+                        onClick={() => resolveAlert(alert.id)}
+                      >
+                        Resolve
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Review Queue button */}
           <button
             className="btn-review-queue"
             onClick={() => setReviewOpen(true)}

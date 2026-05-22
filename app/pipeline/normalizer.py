@@ -1,133 +1,12 @@
 # Step 5: AI normalize via AI model, DynamoDB rules lookup,
 #  confidence score, route low-confidence to review queue
 
-"""
-INSTRUCTIONS FOR normalize_log() FUNCTION
-===========================================
-
-PURPOSE:
-  Take parsed log records and normalize them using AI, apply business rules,
-  assign confidence scores, and route low-confidence events to a review queue.
-
-INPUTS:
-  - parsed_records: List of dictionaries from parse_log() function
-    Each record has: timestamp, source, event_type, severity, message, raw_fields
-
-OUTPUTS:
-  - Return a dictionary with:
-    {
-      "normalized_records": [
-        {
-          "timestamp": "2024-04-17T10:30:00Z",
-          "source": "machine_001",
-          "event_type": "temperature_warning",
-          "severity": "warning",
-          "message": "Temperature exceeded threshold",
-          "ai_normalized": {
-            "category": "thermal_event",           # AI categorization
-            "root_cause": "cooling_system_malfunction",  # AI inference
-            "recommended_action": "check cooling system",
-            "confidence": 0.92                     # 0.0 to 1.0 score
-          },
-          "requires_review": False,                # Flag for manual review queue
-          "review_reason": None                    # Why it needs review (if applicable)
-        }
-      ],
-      "review_queue_items": [                      # Items that need human review
-        {
-          "id": "uuid",
-          "original_record": {...},
-          "ai_suggestion": {...},
-          "confidence": 0.45,
-          "review_reason": "Low confidence in categorization"
-        }
-      ]
-    }
-
-STEPS TO IMPLEMENT:
-
-  1. FOR EACH parsed record:
-     a. Call AI model (OpenRouter API via app.config) to categorize and understand the event
-        - Send: timestamp, source, event_type, severity, message, raw_fields
-        - Receive: category, root_cause, recommended_action, confidence_score
-     
-     b. Look up business rules in DynamoDB (app.shared.dynamo_client)
-        - Query rules table for matching patterns (machine type, event type, etc)
-        - Apply any overrides or special handling
-     
-     c. Combine AI results + business rules
-        - If business rule overrides AI: use rule result with high confidence
-        - If rule matches but AI disagrees: lower confidence
-        - If no matching rule: use AI result as-is
-     
-     d. Calculate final confidence score (0.0 to 1.0)
-        - Start with AI confidence
-        - Adjust based on data quality (missing fields = lower confidence)
-        - Adjust based on rule matching
-     
-     e. Decide if needs review:
-        - If confidence < 0.7: requires_review = True
-        - If conflicting signals (rule vs AI): requires_review = True
-        - If any parse errors in raw_fields: requires_review = True
-     
-     f. If requires_review: add to review_queue_items
-     
-  2. Return results with all normalized records and review queue items
-
-SERVICES TO USE:
-  - app.shared.dynamo_client: Look up business rules in DynamoDB
-  - OpenRouter API: Call AI model for categorization (configured in app.config)
-    - API endpoint: Check environment variable for OPENROUTER_API_KEY
-    - Model: Use gpt-4 or similar (check config)
-
-BUSINESS RULES (stored in DynamoDB):
-  - Table name: "rules" or similar
-  - Query by: machine_type, event_pattern, severity_threshold
-  - Return: category override, min_confidence, recommended_action
-
-AI MODEL PROMPTS (example):
-  "Given a manufacturing log event:
-   - Machine: {source}
-   - Event Type: {event_type}
-   - Severity: {severity}
-   - Message: {message}
-   
-   Analyze and provide:
-   1. What category of failure/event is this? (thermal, mechanical, electrical, software, unknown)
-   2. What is the likely root cause?
-   3. What action should be taken?
-   4. How confident are you (0-1)? Explain why.
-   
-   Return JSON with: category, root_cause, recommended_action, confidence"
-
-CONFIDENCE SCORING LOGIC:
-  - Start with AI confidence (usually 0.5 to 0.95)
-  - Penalize missing fields: -0.1 per important missing field
-  - Boost if DynamoDB rule matches: +0.15
-  - Boost if multiple signals agree: +0.1
-  - Cap at 0.0 (min) and 1.0 (max)
-
-ROUTING LOGIC:
-  - High confidence (>0.85): Direct to hot/cold path based on severity
-  - Medium confidence (0.7-0.85): Hot path for urgent, cold path for routine
-  - Low confidence (<0.7): Add to review queue for human approval
-
-ERROR HANDLING:
-  - If AI API fails: set confidence to 0.0 and mark for review
-  - If DynamoDB lookup fails: use AI result without rule boost
-  - If record is malformed: mark for review with reason "Data quality issues"
-
-NOTES:
-  - Review queue items have short TTL (24-48 hours) in DynamoDB
-  - Humans can approve/reject items via POST /queue/{id}/review endpoint
-  - Approved items bypass confidence checks and go to hot/cold path
-"""
-
 import os
 import json
 import logging
 import uuid
 import httpx
+from collections import defaultdict
 from app.shared.dynamo import dynamo_client
 
 AI_KEY         = os.getenv("AI_KEY")
@@ -137,79 +16,263 @@ RULES_TABLE    = os.getenv("DYNAMODB_TABLE_RULES", "normalization-rules")
 REVIEW_TABLE   = os.getenv("DYNAMODB_TABLE_REVIEW", "human-review-queue")
 CONFIDENCE_THRESHOLD = float(os.getenv("NORMALIZE_CONFIDENCE_THRESHOLD", "0.85"))
 
-# Default categories if none exist in database
 DEFAULT_CATEGORIES = [
     "thermal", "mechanical", "electrical", "gas_leak", "contamination",
     "process_drift", "safety", "software", "maintenance", "unknown"
 ]
 
+# ── Semiconductor Fab Grounding Context ──────────────────────────────────────
+FAB_GROUNDING_CONTEXT = """
+SEMICONDUCTOR FAB EQUIPMENT GROUNDING CONTEXT:
+Use this reference to anchor your categorization to real fab failure modes.
+
+THIN FILM DEPOSITION (PECVD / LPCVD / CVD / ALD / PVD / Sputter):
+  Aliases: Centura, Vantage, VECTOR, Endura, Producer, any tool containing CVD/ALD/PVD/PECVD
+  Common faults: gas flow anomalies (SiH4, N2O, WF6, TMA, precursors),
+                 chamber pressure deviation, substrate temperature excursion,
+                 plasma ignition failure, precursor concentration out-of-spec
+  → categories: gas_leak | thermal | electrical | process_drift
+
+PLASMA ETCH / DRY ETCH (Etch, RIE, DRIE):
+  Aliases: Kiyo, Vantex, Flex, Episode, any tool containing ETCH or RIE
+  Common faults: RF arc / plasma instability, MFC deviation (HBr, Cl2, CF4, O2, NF3),
+                 electrostatic chuck temperature, etch rate drift, end-point detection miss
+  → categories: electrical | gas_leak | mechanical | thermal | process_drift
+
+LITHOGRAPHY / EUV (Scanner, Stepper, EUV, DUV):
+  Aliases: TWINSCAN, LITHO-SCANNER, any tool containing LITHO, SCANNER, or EUV
+  Common faults: overlay out-of-spec, focus/dose error, reticle particle,
+                 stage vibration, Sn plasma source fault (EUV), collector mirror contamination
+  → categories: mechanical | process_drift | electrical | maintenance
+
+CHEMICAL MECHANICAL PLANARIZATION (CMP):
+  Aliases: Reflexion, Mirra, any tool containing CMP
+  Common faults: slurry flow/concentration, removal rate deviation,
+                 pad condition, wafer carrier motor temp, chiller failure
+  → categories: mechanical | thermal | process_drift | contamination
+
+THERMAL PROCESSING (Furnace, RTP, Anneal, Oxidation, Diffusion):
+  Aliases: ANNEAL, DIFFUSION, RTP, any tool containing FURNACE or THERMAL
+  Common faults: zone temperature non-uniformity, lamp failure, ramp rate deviation,
+                 ambient gas flow (O2, N2, H2), boat/quartz contamination
+  → categories: thermal | electrical | process_drift
+
+ATOMIC LAYER DEPOSITION (ALD):
+  Aliases: ALD, Pulsar, any tool containing ALD
+  Common faults: precursor pulse timing, half-cycle miscount, purge line contamination,
+                 growth-per-cycle drift, valve actuation failure
+  → categories: process_drift | gas_leak | mechanical
+
+ION IMPLANTATION (Implanter):
+  Aliases: IMPLANT, NV8200, any tool containing IMPLANT
+  Common faults: beam current drop, source filament failure, neutralizer fault,
+                 dose accuracy, energy contamination, lot quarantine
+  → categories: electrical | mechanical | process_drift
+
+WET PROCESSING (Wet Bench, Track, Spin Coater):
+  Aliases: WET-BENCH, WET-STATION, TRACK, any tool containing WET or TRACK
+  Common faults: chemical concentration out-of-spec (HF, SC1, H2SO4),
+                 bath temperature deviation, rinse flow, chemical spill
+  → categories: contamination | gas_leak | process_drift | safety
+
+ELECTROCHEMICAL PLATING (ECP / Electrofill):
+  Aliases: ECP, ELECTROFILL, any tool containing ECP or PLATING
+  Common faults: plating current/voltage deviation, bath chemistry, agitation failure,
+                 seed layer continuity, bath temperature
+  → categories: process_drift | electrical | contamination
+
+EPITAXIAL GROWTH (Epi):
+  Aliases: EPI, EPITAXIAL, any tool containing EPI
+  Common faults: growth rate deviation, dopant concentration, gas purity,
+                 susceptor temperature uniformity, autodoping
+  → categories: process_drift | thermal | gas_leak
+
+WAFER HANDLING (Robot Arm, EFEM, Handler, Load Port):
+  Aliases: ROBOT, ROBOT-ARM, HANDLER, EFEM
+  Common faults: end-effector collision, wafer drop, slot mapping error,
+                 vacuum loss at chuck, load port door fault
+  → categories: mechanical
+
+GAS DELIVERY (MFC, Gas Panel, Gas Cabinet, VMB):
+  Aliases: GAS-PANEL, GAS-CABINET, MFC, VMB
+  Common faults: pressure drop (possible line rupture), toxic gas sensor alarm
+                 (SiH4, HBr, NF3, Cl2), isolation valve trip, flow deviation
+  → categories: gas_leak | safety | mechanical
+
+INSPECTION & METROLOGY (SEM, OCD, Particle Counter):
+  Aliases: SEM, OCD, SURFSCAN, METROLOGY, KLA
+  Common faults: particle count alarm, calibration drift, recipe load failure
+  → categories: maintenance | contamination | process_drift
+
+SUPPORT EQUIPMENT (Pump, Chiller, UPS, Abatement):
+  Aliases: PUMP, CHILLER, UPS, ABATEMENT, VACUUM
+  Common faults: pump overheat, coolant leak, vacuum loss, power fault
+  → categories: mechanical | thermal | electrical
+
+MANUFACTURING EXECUTION SYSTEM (MES, HOST, SECS-GEM):
+  Aliases: MES-SERVER, HOST, SECS, E84
+  Common faults: communication timeout, recipe load failure, lot tracking error
+  → categories: software
+
+ALARM SEVERITY REFERENCE:
+  CRITICAL → immediate safety risk (fire, gas leak, E-stop, facility evacuation)
+  ERROR    → process or equipment fault requiring engineer intervention
+  WARNING  → parameter approaching spec limit; monitor and prepare to intervene
+  INFO     → normal operational record; no action required
+"""
+
+
+# ── Category helpers ──────────────────────────────────────────────────────────
+
 async def get_available_categories() -> list[str]:
-    """
-    Fetch all unique categories from DynamoDB rules table.
-    Falls back to DEFAULT_CATEGORIES if query fails.
-    """
+    """Fetch all unique categories from DynamoDB rules table; fallback to defaults."""
     try:
         response = dynamo_client.scan(
             TableName=RULES_TABLE,
             ProjectionExpression="category"
         )
-        items = response.get("Items", [])
-        categories = set()
-        for item in items:
+        categories = set(DEFAULT_CATEGORIES)
+        for item in response.get("Items", []):
             if "category" in item and "S" in item["category"]:
                 cat = item["category"]["S"]
-                if cat and cat != "unknown":
+                if cat:
                     categories.add(cat)
-        
-        # Always include default categories and unknown
-        categories.update(DEFAULT_CATEGORIES)
-        categories.add("unknown")
-        
-        result = sorted(list(categories))
-        logging.debug(f"Fetched {len(result)} categories from DynamoDB: {result}")
-        return result
+        return sorted(list(categories))
     except Exception as e:
         logging.warning(f"Failed to fetch categories from DynamoDB: {e}. Using defaults.")
         return DEFAULT_CATEGORIES
 
-async def call_ai(record: dict, category_hint: str | None = None, available_categories: list[str] | None = None) -> dict:
+
+# ── Few-Shot RAG: Category Pool ───────────────────────────────────────────────
+
+def fetch_approved_pool(limit: int = 50) -> dict[str, list]:
     """
-    Call AI model to categorize and analyze a log record.
-    
-    Args:
-        record: Log record dict with timestamp, source, event_type, severity, message
-        category_hint: Optional category from DynamoDB rules to guide AI
-        available_categories: List of valid category options from database
+    Scans the review table ONCE per batch for recently approved events.
+    Returns { category: [{"message", "source", "confidence"}, ...] }
+    One DB call per batch — every approval benefits every future machine in the same category.
     """
+    pool: dict[str, list] = {}
+    try:
+        response = dynamo_client.scan(
+            TableName=REVIEW_TABLE,
+            FilterExpression="approved = :a",
+            ExpressionAttributeValues={":a": {"BOOL": True}},
+            Limit=limit,
+        )
+        for item in response.get("Items", []):
+            cat = item.get("category", {}).get("S", "unknown")
+            pool.setdefault(cat, []).append({
+                "message":    item.get("message",    {}).get("S", ""),
+                "source":     item.get("source",     {}).get("S", ""),
+                "confidence": float(item.get("confidence", {}).get("N", "0")),
+            })
+    except Exception as e:
+        logging.warning(f"fetch_approved_pool failed: {e}")
+    return pool
+
+
+def infer_category_heuristic(record: dict) -> str:
+    """
+    Fast keyword scan to get a tentative category for pool lookup.
+    Not the final category — just good enough to pick relevant few-shot examples.
+    """
+    text = (
+        (record.get("message")    or "") + " " +
+        (record.get("event_type") or "") + " " +
+        (record.get("source")     or "")
+    ).lower()
+
+    if any(k in text for k in ["fire", "evacuate", "toxic", "emergency", "gas detector"]):
+        return "safety"
+    if any(k in text for k in ["sih4", "hbr", "nf3", "cl2", "gas leak", "mfc", "pressure drop", "gas_leak"]):
+        return "gas_leak"
+    if any(k in text for k in ["temperature", "temp", "overheat", "thermal", "heater", "cooling"]):
+        return "thermal"
+    if any(k in text for k in ["voltage", "current", "rf", "arc", "power", "electrical", "vsup", "dcbx", "almid"]):
+        return "electrical"
+    if any(k in text for k in ["collision", "robot", "wafer drop", "mechanical", "valve", "pump"]):
+        return "mechanical"
+    if any(k in text for k in ["particle", "contamination", "spill", "chemical"]):
+        return "contamination"
+    if any(k in text for k in ["overlay", "removal rate", "etch rate", "drift", "out-of-spec", "recipe"]):
+        return "process_drift"
+    if any(k in text for k in ["timeout", "mes", "communication", "software", "crash"]):
+        return "software"
+    if any(k in text for k in ["pm due", "calibration", "maintenance", "scheduled"]):
+        return "maintenance"
+    return "unknown"
+
+
+def rank_examples(pool_for_category: list, source: str, limit: int = 3) -> list:
+    """
+    Ranks approved examples by relevance to the current record's machine:
+      1. Same exact machine (highest relevance)
+      2. Same equipment class (e.g. all ETCH tools)
+      3. Any machine in the category (cross-machine knowledge)
+    """
+    parts = source.upper().replace("TOOL_", "").replace("MACHINE_", "").replace("DEVICE_", "")
+    machine_class = parts.split("-")[0] if "-" in parts else parts
+
+    same_machine = [e for e in pool_for_category if e["source"] == source]
+    same_class   = [e for e in pool_for_category if machine_class in e["source"].upper()
+                    and e["source"] != source]
+    other        = [e for e in pool_for_category if machine_class not in e["source"].upper()]
+
+    return (same_machine + same_class + other)[:limit]
+
+
+# ── AI call ───────────────────────────────────────────────────────────────────
+
+async def call_ai(
+    record: dict,
+    category_hint: str | None = None,
+    available_categories: list[str] | None = None,
+    few_shot_examples: list[dict] | None = None,
+) -> dict:
     if available_categories is None:
         available_categories = await get_available_categories()
-    
-    categories_str = "|".join(available_categories)
-    
+
+    # Build RAG section from category pool examples
+    rag_section = ""
+    if few_shot_examples:
+        lines = "\n".join([
+            f"  {i+1}. Machine: {ex['source']}  |  Message: \"{ex['message'][:120]}\"\n"
+            f"     → Approved category: {ex.get('category', '?')} | Confidence: {ex['confidence']:.2f}"
+            for i, ex in enumerate(few_shot_examples)
+        ])
+        rag_section = f"""
+
+PREVIOUSLY APPROVED EVENTS (few-shot examples — cross-machine learning):
+{lines}
+Use these as grounding examples. Classify the new event below with the same reasoning."""
+
+    # Fallback hint if no examples but a rule exists
     hint_section = ""
-    if category_hint and category_hint != "unknown":
+    if category_hint and category_hint != "unknown" and not few_shot_examples:
         hint_section = f"""
 
-PRIOR HUMAN FEEDBACK: Engineers who reviewed previous events from this machine confirmed the category as '{category_hint}'. Weight this strongly — generate your root_cause and recommended_action assuming this category is correct, and assign high confidence unless the message clearly contradicts it."""
+PRIOR HUMAN FEEDBACK: Engineers confirmed the category as '{category_hint}'.
+Weight this strongly unless the message clearly contradicts it."""
 
-    prompt = f"""You are an expert analyst at a semiconductor fabrication plant (fab).
+    prompt = f"""{FAB_GROUNDING_CONTEXT}
+---
+You are an expert analyst at a semiconductor fabrication plant (fab).
 Analyze this machine log event and classify it.
 
 Machine: {record.get('source', 'unknown')}
 Event Type: {record.get('event_type', 'unknown')}
 Severity: {record.get('severity', 'unknown')}
-Message: {record.get('message', '')}{hint_section}
+Message: {record.get('message', '')}{rag_section}{hint_section}
 
-You MUST respond with ONLY a valid JSON object. No explanation, no markdown, no code blocks.
+You MUST respond with ONLY a valid JSON object — no explanation, no markdown.
 Use exactly these keys:
 {{
-  "category": "{categories_str}",
-  "root_cause": "1-2 sentences describing the most likely root cause based on the message",
-  "recommended_action": "specific action an engineer should take (e.g. 'Inspect chamber O-rings and recheck MFC calibration')",
-  "confidence": <number 0.0-1.0>
+  "category": "thermal|mechanical|electrical|gas_leak|contamination|process_drift|safety|software|maintenance|unknown",
+  "root_cause": "1-2 sentences on the most likely root cause",
+  "recommended_action": "specific engineer action",
+  "confidence": <0.0-1.0>
 }}
-
-For confidence: 0.9+ if cause is explicit in the message, 0.7-0.9 if strongly implied, 0.5-0.7 if inferred, <0.5 if ambiguous."""
+"""
 
     try:
         async with httpx.AsyncClient() as client:
@@ -222,30 +285,52 @@ For confidence: 0.9+ if cause is explicit in the message, 0.7-0.9 if strongly im
                 json={
                     "model": AI_MODEL,
                     "messages": [{"role": "user", "content": prompt}],
+                    "response_format": {
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": "log_classification",
+                            "strict": True,
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "category": {
+                                        "type": "string",
+                                        "enum": [
+                                            "thermal", "mechanical", "electrical", "gas_leak",
+                                            "contamination", "process_drift", "safety",
+                                            "software", "maintenance", "unknown"
+                                        ]
+                                    },
+                                    "root_cause":         {"type": "string"},
+                                    "recommended_action": {"type": "string"},
+                                    "confidence":         {"type": "number", "minimum": 0, "maximum": 1}
+                                },
+                                "required": ["category", "root_cause", "recommended_action", "confidence"],
+                                "additionalProperties": False
+                            }
+                        }
+                    },
                 },
                 timeout=15.0
             )
             response.raise_for_status()
             content = response.json()["choices"][0]["message"]["content"]
             result = json.loads(content)
-        
-        # Ensure confidence is a valid float between 0 and 1
-        if "confidence" in result:
-            result["confidence"] = float(result["confidence"])
-            result["confidence"] = max(0.0, min(1.0, result["confidence"]))
-        else:
-            result["confidence"] = 0.5  # Default mid-range confidence if not provided
-        
-        # Ensure category is in available categories, default to unknown if not
+
+        result["confidence"] = max(0.0, min(1.0, float(result.get("confidence", 0.5))))
+
         if result.get("category") not in available_categories:
             logging.warning(f"AI returned unknown category '{result.get('category')}', defaulting to 'unknown'")
             result["category"] = "unknown"
-        
+
         return result
     except Exception as e:
         logging.warning(f"AI call failed: {e}")
         return {"category": "unknown", "root_cause": "unknown",
                 "recommended_action": "manual review", "confidence": 0.0}
+
+
+# ── DynamoDB rule lookup ──────────────────────────────────────────────────────
 
 def lookup_rule(record: dict) -> dict | None:
     source = record.get("source", "unknown")
@@ -259,17 +344,11 @@ def lookup_rule(record: dict) -> dict | None:
         if not items:
             return None
 
-        # Pick the item with the most human approvals — that is the most
-        # confidently validated category for this source. Ties go to the first.
-        best = max(
-            items,
-            key=lambda i: int(i.get("approval_count", {}).get("N", "0"))
-        )
+        best = max(items, key=lambda i: int(i.get("approval_count", {}).get("N", "0")))
         return {
             "category":           best.get("category",           {}).get("S"),
             "recommended_action": best.get("recommended_action", {}).get("S"),
             "min_confidence":     float(best.get("min_confidence", {}).get("N", 0)),
-            # Sum of boosts across all category items for this source
             "confidence_boost":   sum(
                 float(i.get("confidence_boost", {}).get("N", "0")) for i in items
             ),
@@ -278,27 +357,22 @@ def lookup_rule(record: dict) -> dict | None:
         logging.warning(f"DynamoDB rule lookup failed for '{source}': {e}")
     return None
 
+
 def combine_and_score(record: dict, ai_result: dict, rule: dict | None):
     confidence = float(ai_result.get("confidence", 0.0))
     review_reason = None
 
-    # Penalise missing important fields
     for field in ("source", "event_type", "message"):
         if not record.get(field) or record.get(field) == "unknown":
             confidence -= 0.1
 
     if rule:
         if rule.get("category") and rule["category"] != ai_result.get("category"):
-            # Rule and AI disagree — lower confidence, flag it
             confidence -= 0.1
             review_reason = "Rule and AI categorization conflict"
         else:
-            # Rule confirms AI — boost confidence
             confidence += 0.15
 
-        # Apply accumulated human-review feedback boost (range [-0.20, +0.20])
-        # Written by update_feedback_rule() in app/shared/dynamo.py each time
-        # a reviewer approves or rejects an event from this source.
         feedback_boost = float(rule.get("confidence_boost", 0.0))
         if feedback_boost != 0.0:
             confidence += feedback_boost
@@ -307,9 +381,8 @@ def combine_and_score(record: dict, ai_result: dict, rule: dict | None):
                 feedback_boost, record.get("source"), confidence,
             )
 
-    confidence = max(0.0, min(1.0, confidence))  # clamp to [0, 1]
+    confidence = max(0.0, min(1.0, confidence))
 
-    # Build the final AI result, letting rule override if present
     final = {
         "category":           rule["category"] if rule and rule.get("category") else ai_result.get("category", "unknown"),
         "root_cause":         ai_result.get("root_cause", "unknown"),
@@ -319,17 +392,121 @@ def combine_and_score(record: dict, ai_result: dict, rule: dict | None):
 
     return final, confidence, review_reason
 
+
+# ── Temporal anomaly detection ────────────────────────────────────────────────
+
+async def detect_temporal_anomaly(records: list[dict]) -> dict | None:
+    """
+    Analyzes 2+ normalized records from the SAME source for escalation patterns.
+    Returns a trend_alert dict if anomaly detected, None if sequence is normal.
+    """
+    if len(records) < 2:
+        return None
+
+    source = records[0].get("source", "unknown")
+
+    event_lines = "\n".join([
+        f"  [{r.get('timestamp', '?')}] "
+        f"severity={r.get('severity','?')} "
+        f"category={r.get('ai_normalized', {}).get('category', '?')} "
+        f"confidence={r.get('ai_normalized', {}).get('confidence', 0):.2f} "
+        f"message=\"{r.get('message', '')[:120]}\""
+        for r in records
+    ])
+
+    prompt = f"""You are a predictive maintenance AI at a semiconductor fab.
+
+Machine: {source}
+Recent event sequence ({len(records)} events, chronological):
+{event_lines}
+
+Analyze for temporal patterns. Respond with ONLY a JSON object:
+{{
+  "is_anomaly": <true|false>,
+  "pattern": "<one sentence describing the observed trend, or 'No significant trend'>",
+  "predicted_severity": "normal|warning|critical",
+  "estimated_time_to_critical": "<e.g. '~25 minutes' or 'N/A'>",
+  "recommended_action": "<specific engineer action, or 'Continue monitoring'>",
+  "confidence": <0.0-1.0>
+}}
+
+Mark is_anomaly=true if you observe any of:
+- Monotonically increasing or decreasing numeric parameter values
+- Severity escalation (INFO → WARNING → ERROR → CRITICAL)
+- Same fault code repeating at increasing frequency
+- Category shifting mid-sequence toward safety or critical
+- Any pattern that suggests imminent equipment failure"""
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                OPENROUTER_URL,
+                headers={"Authorization": f"Bearer {AI_KEY}", "Content-Type": "application/json"},
+                json={
+                    "model": AI_MODEL,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "response_format": {"type": "json_object"},
+                },
+                timeout=20.0,
+            )
+            response.raise_for_status()
+            result = json.loads(response.json()["choices"][0]["message"]["content"])
+            result["machine"] = source
+            return result if result.get("is_anomaly") else None
+    except Exception as e:
+        logging.warning(f"Temporal anomaly detection failed for {source}: {e}")
+        return None
+
+
+# ── Main pipeline entry point ─────────────────────────────────────────────────
+
 async def normalize_log(parsed_records: list) -> dict:
+    import asyncio
+
     normalized_records = []
     review_queue_items = []
-    
-    # Fetch available categories once per batch
-    available_categories = await get_available_categories()
 
+    # Fetch available categories and approved pool ONCE for the whole batch
+    available_categories, approved_pool = await asyncio.gather(
+        get_available_categories(),
+        asyncio.get_event_loop().run_in_executor(None, lambda: fetch_approved_pool(limit=50)),
+    )
+
+    # Pre-compute per-record inputs (rules + few-shot examples) — all fast/synchronous
+    per_record_inputs = []
     for record in parsed_records:
         rule          = lookup_rule(record)
         category_hint = rule.get("category") if rule and rule.get("category") else None
-        ai_result     = await call_ai(record, category_hint=category_hint, available_categories=available_categories)
+        tentative_cat = category_hint or infer_category_heuristic(record)
+        few_shot_examples = rank_examples(
+            pool_for_category=approved_pool.get(tentative_cat, []),
+            source=record.get("source", "unknown"),
+        )
+        per_record_inputs.append((record, rule, category_hint, few_shot_examples))
+
+    # Fire ALL AI calls in parallel — N records → N concurrent requests
+    # Each call_ai() has its own 15s timeout; total wall-clock ≈ 1 slow call, not N×slow
+    ai_results = await asyncio.gather(
+        *[
+            call_ai(
+                record,
+                category_hint=category_hint,
+                available_categories=available_categories,
+                few_shot_examples=few_shot_examples if few_shot_examples else None,
+            )
+            for record, _rule, category_hint, few_shot_examples in per_record_inputs
+        ],
+        return_exceptions=True,   # one failure won't abort the others
+    )
+
+    # Merge AI results with their records
+    for (record, rule, _hint, _examples), ai_result in zip(per_record_inputs, ai_results):
+        # If gather caught an exception for this slot, fall back gracefully
+        if isinstance(ai_result, Exception):
+            logging.warning("AI call raised exception for record %s: %s", record.get("source"), ai_result)
+            ai_result = {"category": "unknown", "root_cause": "unknown",
+                         "recommended_action": "manual review", "confidence": 0.0}
+
         final, confidence, review_reason = combine_and_score(record, ai_result, rule)
 
         requires_review = (
@@ -353,7 +530,29 @@ async def normalize_log(parsed_records: list) -> dict:
                 "review_reason":   review_reason or "Low confidence in categorization"
             })
 
+    # Temporal anomaly detection — group records by machine, run in parallel
+    by_source: dict[str, list] = defaultdict(list)
+    for record in normalized_records:
+        by_source[record.get("source", "unknown")].append(record)
+
+    sources_with_multi = [(src, recs) for src, recs in by_source.items() if len(recs) >= 2]
+
+    anomaly_results = await asyncio.gather(
+        *[detect_temporal_anomaly(recs) for _src, recs in sources_with_multi],
+        return_exceptions=True,
+    ) if sources_with_multi else []
+
+    trend_alerts = []
+    for result in anomaly_results:
+        if isinstance(result, Exception):
+            logging.warning("Temporal anomaly detection raised: %s", result)
+            continue
+        if result:
+            trend_alerts.append(result)
+            logging.info("Temporal anomaly detected for %s: %s", result.get("machine"), result.get("pattern"))
+
     return {
-        "normalized_records":  normalized_records,
-        "review_queue_items":  review_queue_items
+        "normalized_records": normalized_records,
+        "review_queue_items": review_queue_items,
+        "trend_alerts":       trend_alerts,
     }

@@ -48,7 +48,7 @@ EXT_TO_FORMAT = {
 }
 
 DELAY_BANDS = {
-    "demo":      (0.5,   3.0),
+    "demo":      (0.5,   1.0),
     "realistic": (5.0, 120.0),
 }
 
@@ -64,7 +64,7 @@ def upload_file(path: Path, fmt: str) -> dict:
             UPLOAD_URL,
             files={"file": (path.name, f)},
             data={"file_format": fmt},
-            timeout=30,
+            timeout=120,
         )
     try:
         body = resp.json()
@@ -237,8 +237,12 @@ def main():
         help="Folder containing log files (default: simulation_data)"
     )
     parser.add_argument(
-        "--batch1", type=int, default=75,
-        help="Number of files to upload in phase 1 (default: 75)"
+        "--batch1", type=int, default=22,
+        help="Number of files to upload in phase 1 (default: 22)"
+    )
+    parser.add_argument(
+        "--batch2", type=int, default=20,
+        help="Max number of files to upload in phase 2 (default: 20; 0 = no limit)"
     )
     parser.add_argument(
         "--dry-run", action="store_true",
@@ -260,7 +264,8 @@ def main():
     total = len(files)
     split = min(args.batch1, total)
     batch1 = files[:split]
-    batch2 = files[split:]
+    batch2_all = files[split:]
+    batch2 = batch2_all[:args.batch2] if args.batch2 > 0 else batch2_all
 
     print(f"\nSimulation: {total} files  |  Phase 1: {len(batch1)}  |  Phase 2: {len(batch2)}")
 

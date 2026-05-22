@@ -1017,6 +1017,62 @@ wx("xml_DL_MALFORMED_VENDOR_20260421_073311_015.xml", """
 
 
 # ════════════════════════════════════════════════════════════════════
+#  FEW-SHOT RAG + TEMPORAL ANOMALY DEMO — CENTURA-12B
+# ════════════════════════════════════════════════════════════════════
+
+# ── Phase 1 (DL JSON files) ──────────────────────────────────────────────────
+# Machine: tool_CENTURA-12B (new, no DynamoDB rule yet)
+# Format: proprietary DCBX alarm codes — AI cannot confidently categorize
+# Expected: category=unknown, confidence≈0.25 → dead letter / review queue
+# Sorted alphabetically (json_DL_*) → land in Phase 1 regardless of batch size
+
+wj("json_DL_CENTURA12B_20260421_091422_101.json", [
+    {"timestamp": at(9, 14, 22), "source": "tool_CENTURA-12B",
+     "event_type": "ALMID=0x4F2A",
+     "severity": "WARNING",
+     "message": "ALMID=0x4F2A GRP=DCBX MOD=PM3 CHNL=03 VAL=+237 THR=100 UNIT=mV SEQ=449812 RCP=ETCH_HBR_V4 LOT=M25B-019 WFR=W07"},
+])
+
+wj("json_DL_CENTURA12B_20260421_091705_102.json", [
+    {"timestamp": at(9, 17, 5), "source": "tool_CENTURA-12B",
+     "event_type": "ALMID=0x4F2A",
+     "severity": "WARNING",
+     "message": "ALMID=0x4F2A GRP=DCBX MOD=PM3 CHNL=03 VAL=+291 THR=100 UNIT=mV SEQ=449813 RCP=ETCH_HBR_V4 LOT=M25B-019 WFR=W08"},
+])
+
+wj("json_DL_CENTURA12B_20260421_091948_103.json", [
+    {"timestamp": at(9, 19, 48), "source": "tool_CENTURA-12B",
+     "event_type": "ALMID=0x4F2A",
+     "severity": "WARNING",
+     "message": "ALMID=0x4F2A GRP=DCBX MOD=PM3 CHNL=03 VAL=+318 THR=100 UNIT=mV SEQ=449814 RCP=ETCH_HBR_V4 LOT=M25B-019 WFR=W09"},
+])
+
+wj("json_DL_CENTURA12B_20260421_092214_104.json", [
+    {"timestamp": at(9, 22, 14), "source": "tool_CENTURA-12B",
+     "event_type": "ALMID=0x4F2B",
+     "severity": "ERROR",
+     "message": "ALMID=0x4F2B GRP=DCBX MOD=PM3 CHNL=03 VAL=+489 THR=100 UNIT=mV SEQ=449815 RCP=ETCH_HBR_V4 LOT=M25B-019 WFR=W10"},
+])
+
+# ── Phase 2 (LOG files, after human approval) ─────────────────────────────────
+# Same machine: tool_CENTURA-12B — now has DynamoDB rule + approved pool examples
+# Expected: few-shot RAG → category=electrical, confidence≈0.90+ → P1
+# log_P1_* sorts after all JSONs, landing in Phase 2
+
+wl("log_P1_CENTURA12B_20260421_140755_105.log", [
+    "2026-04-21T14:07:55Z [WARN] tool_CENTURA-12B ALMID=0x4F2A GRP=DCBX MOD=PM3 CHNL=01 VAL=+441 THR=100 UNIT=mV SEQ=449913 RCP=ETCH_HBR_V4 LOT=M25B-021 WFR=W03",
+])
+
+wl("log_P1_CENTURA12B_20260421_141122_106.log", [
+    "2026-04-21T14:11:22Z [WARN] tool_CENTURA-12B ALMID=0x4F2A GRP=DCBX MOD=PM3 CHNL=01 VAL=+503 THR=100 UNIT=mV SEQ=449914 RCP=ETCH_HBR_V4 LOT=M25B-021 WFR=W04",
+])
+
+wl("log_P1_CENTURA12B_20260421_141509_107.log", [
+    "2026-04-21T14:15:09Z [ERROR] tool_CENTURA-12B ALMID=0x4F2B GRP=DCBX MOD=PM3 CHNL=01 VAL=+672 THR=100 UNIT=mV SEQ=449915 RCP=ETCH_HBR_V4 LOT=M25B-021 WFR=W05",
+])
+
+
+# ════════════════════════════════════════════════════════════════════
 #  SUMMARY
 # ════════════════════════════════════════════════════════════════════
 

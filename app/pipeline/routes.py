@@ -6,7 +6,7 @@ All routes are registered on a FastAPI APIRouter and mounted in main.py.
 import asyncio
 import re
 
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+from fastapi import APIRouter, BackgroundTasks, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse, Response
 from typing import Optional
 from datetime import datetime, timezone
@@ -25,6 +25,7 @@ from app.shared.db import (
     get_events_timeseries,
     get_all_categories,
     insert_category,
+    get_trend_alerts,
 )
 
 log = logging.getLogger(__name__)
@@ -68,10 +69,15 @@ router = APIRouter()
 
 @router.post("/logs/upload")
 async def upload_log(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     file_format: Optional[str] = Form(None),
 ):
-    """Accept a log file, run the full processing pipeline, return a job_id."""
+    """
+    Accept a log file and return a job_id immediately.
+    Processing runs in the background — poll GET /jobs/{job_id} for results.
+    """
+    import uuid
     log.info("▶▶▶ [UPLOAD] handler entered — file=%s  format=%s", file.filename, file_format)
     try:
         contents = await file.read()
@@ -81,30 +87,29 @@ async def upload_log(
             log.warning("▶▶▶ [UPLOAD] file is empty — rejecting")
             raise HTTPException(status_code=400, detail="File is empty")
 
+        # Generate job_id here so we can return it immediately
+        job_id = str(uuid.uuid4())
+
         # Lazy import avoids the circular dependency:
         #   main.py  (imports router from routes.py)  →  routes.py  →  main.py
-        log.info("▶▶▶ [UPLOAD] importing process_log_file …")
         from app.pipeline.main import process_log_file
-        log.info("▶▶▶ [UPLOAD] calling process_log_file …")
 
-        result = await process_log_file(contents, file.filename, file_format)
+        async def _run_pipeline():
+            try:
+                result = await process_log_file(contents, file.filename, file_format, job_id=job_id)
+                log.info(
+                    "▶▶▶ [BACKGROUND] pipeline done — job_id=%s  status=%s  "
+                    "events_processed=%s  errors=%s",
+                    result.job_id, result.status, result.events_processed, result.errors,
+                )
+            except Exception as exc:
+                log.exception("▶▶▶ [BACKGROUND] pipeline raised — job_id=%s: %s", job_id, exc)
 
-        log.info(
-            "▶▶▶ [UPLOAD] process_log_file returned — job_id=%s  status=%s  "
-            "events_processed=%s  errors=%s",
-            result.job_id, result.status, result.events_processed, result.errors,
-        )
+        background_tasks.add_task(_run_pipeline)
 
-        if result.status == "failed":
-            log.error("▶▶▶ [UPLOAD] pipeline FAILED — returning 500")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Processing failed: {result.errors}",
-            )
-
-        log.info("▶▶▶ [UPLOAD] returning job_id=%s to client", result.job_id)
+        log.info("▶▶▶ [UPLOAD] returning job_id=%s immediately (processing in background)", job_id)
         return {
-            "job_id": result.job_id,
+            "job_id": job_id,
             "status": "accepted",
             "file_name": file.filename,
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -367,7 +372,20 @@ async def get_timeseries(hours: int = 12):
         raise HTTPException(status_code=500, detail="Error fetching timeseries")
 
 
-# ── ENDPOINT 10: GET /health ──────────────────────────────────────────────────
+# ── ENDPOINT 10: GET /trend-alerts ───────────────────────────────────────────
+
+@router.get("/trend-alerts")
+async def list_trend_alerts():
+    """Return the most recent temporal anomaly alerts for the dashboard notification panel."""
+    try:
+        alerts = await get_trend_alerts(limit=50)
+        return {"alerts": alerts}
+    except Exception as e:
+        log.error(f"Error fetching trend alerts: {e}")
+        raise HTTPException(status_code=500, detail="Error fetching trend alerts")
+
+
+# ── ENDPOINT 11: GET /health ──────────────────────────────────────────────────
 
 @router.get("/health")
 async def health():

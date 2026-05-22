@@ -130,6 +130,30 @@ export async function addCategory(name: string): Promise<{ name: string; created
   return res.json();
 }
 
+// ── Trend Alerts ─────────────────────────────────────────────────────────────
+
+export interface TrendAlert {
+  id: number;
+  machine: string;
+  pattern: string;
+  predicted_severity: "warning" | "critical";
+  estimated_time_to_critical: string;
+  recommended_action: string;
+  confidence: number;
+  created_at: string;
+}
+
+export interface TrendAlertsResponse {
+  alerts: TrendAlert[];
+}
+
+export async function fetchTrendAlerts(): Promise<TrendAlert[]> {
+  const res = await fetch(`${BASE}/trend-alerts`);
+  if (!res.ok) throw new Error("Failed to fetch trend alerts");
+  const data: TrendAlertsResponse = await res.json();
+  return data.alerts;
+}
+
 export async function submitReview(
   jobId: string,
   body: ReviewDecision

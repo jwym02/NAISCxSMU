@@ -6,8 +6,165 @@
 /* ── Review Queue button bar ── */
 .review-queue-bar {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
   margin-bottom: 1rem;
+  gap: 0.75rem;
+}
+
+/* ── Trend Alert button ── */
+.btn-trend-alerts {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1.1rem;
+  background: #78716c;
+  color: #fff !important;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+  font-family: "Inter", "Segoe UI", system-ui, sans-serif;
+}
+
+.btn-trend-alerts:hover {
+  background: #57534e;
+}
+
+.btn-trend-alerts.has-alerts {
+  background: #b45309;
+}
+
+.btn-trend-alerts.has-alerts:hover {
+  background: #92400e;
+}
+
+.alert-badge {
+  background: #dc2626 !important;
+}
+
+/* ── Trend Alert wrapper (for dropdown positioning) ── */
+.trend-alert-wrapper {
+  position: relative;
+}
+
+/* ── Trend Alert dropdown panel ── */
+.trend-alerts-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 300;
+  min-width: 380px;
+  max-width: 440px;
+  max-height: 480px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+  padding: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.no-alerts {
+  padding: 1rem;
+  color: #6b7280;
+  font-size: 0.875rem;
+  text-align: center;
+  margin: 0;
+}
+
+/* ── Individual alert card ── */
+.alert-item {
+  border-radius: 6px;
+  padding: 0.75rem;
+  border-left: 4px solid #d97706;
+  background: #fffbeb;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.alert-item.severity-critical {
+  border-left-color: #dc2626;
+  background: #fef2f2;
+}
+
+.alert-item.severity-warning {
+  border-left-color: #d97706;
+  background: #fffbeb;
+}
+
+.alert-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.alert-machine {
+  font-weight: 700;
+  font-size: 0.875rem;
+  color: #111827;
+}
+
+.alert-severity-badge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+  color: #fff;
+  letter-spacing: 0.03em;
+}
+
+.alert-severity-badge.critical {
+  background: #dc2626;
+}
+
+.alert-severity-badge.warning {
+  background: #d97706;
+}
+
+.alert-pattern {
+  font-size: 0.8rem;
+  color: #374151;
+  margin: 0;
+  font-weight: 500;
+}
+
+.alert-detail {
+  font-size: 0.775rem;
+  color: #6b7280;
+  margin: 0;
+}
+
+.alert-confidence {
+  font-size: 0.75rem;
+  color: #9ca3af;
+  margin: 0;
+}
+
+.btn-resolve {
+  align-self: flex-end;
+  margin-top: 0.25rem;
+  padding: 0.25rem 0.75rem;
+  background: #f3f4f6;
+  color: #374151;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  font-size: 0.775rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s;
+  font-family: "Inter", "Segoe UI", system-ui, sans-serif;
+}
+
+.btn-resolve:hover {
+  background: #e5e7eb;
 }
 
 .btn-review-queue {

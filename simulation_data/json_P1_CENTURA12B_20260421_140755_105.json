@@ -1,0 +1,9 @@
+[
+  {
+    "timestamp": "2026-04-21T14:07:55Z",
+    "source": "tool_CENTURA-12B",
+    "event_type": "ALMID=0x4F2A",
+    "severity": "WARNING",
+    "message": "ALMID=0x4F2A GRP=DCBX MOD=PM3 CHNL=01 VAL=+441 THR=100 UNIT=mV SEQ=449913 RCP=ETCH_HBR_V4 LOT=M25B-021 WFR=W03"
+  }
+]

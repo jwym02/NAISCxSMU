@@ -30,7 +30,7 @@ from app.pipeline.routes import router
 from app.shared.db import (
     get_pool, close_pool, init_schema,
     insert_raw_log, insert_normalized_event, insert_event_routing,
-    insert_review_queue_item
+    insert_review_queue_item, insert_trend_alert,
 )
 from app.shared.kafka_client import get_kafka_client, close_kafka_client, EventPriority
 
@@ -56,7 +56,7 @@ class ProcessResult(BaseModel):
     timestamp: str
 
 
-async def process_log_file(file_data: bytes, file_name: str, file_format: Optional[str] = None) -> ProcessResult:
+async def process_log_file(file_data: bytes, file_name: str, file_format: Optional[str] = None, job_id: Optional[str] = None) -> ProcessResult:
     """
     Execute the complete pipeline for a log file.
 
@@ -64,11 +64,12 @@ async def process_log_file(file_data: bytes, file_name: str, file_format: Option
         file_data: File content as bytes
         file_name: Original filename
         file_format: Optional format hint (JSON, CSV, XML, LOG, etc.)
+        job_id: Optional pre-generated job ID (caller may need it before processing starts)
 
     Returns:
         ProcessResult with pipeline execution details
     """
-    job_id = str(uuid4())
+    job_id = job_id or str(uuid4())
     start_time = datetime.now(timezone.utc)
     errors = []
 
@@ -139,6 +140,7 @@ async def process_log_file(file_data: bytes, file_name: str, file_format: Option
             normalize_result = await normalize_log(records)
             normalized_events = normalize_result.get("normalized_records", [])
             review_queue_items = normalize_result.get("review_queue_items", [])
+            trend_alerts_detected = normalize_result.get("trend_alerts", [])
 
             logger.info("▶▶▶ [PIPELINE:3] NORMALIZE OK  normalized=%d  review_queue=%d",
                         len(normalized_events), len(review_queue_items))
@@ -271,6 +273,13 @@ async def process_log_file(file_data: bytes, file_name: str, file_format: Option
 
             logger.info("▶▶▶ [PIPELINE:5] PERSIST done  ne_ok=%d  ne_fail=%d  rq_ok=%d",
                         ne_ok, ne_fail, rq_ok)
+
+            # Persist temporal anomaly alerts
+            for alert in trend_alerts_detected:
+                try:
+                    await insert_trend_alert(alert)
+                except Exception as e:
+                    logger.warning("▶▶▶ [PIPELINE:5] trend_alert INSERT failed: %s", e)
 
         except Exception as e:
             logger.exception("▶▶▶ [PIPELINE:5] PERSIST outer EXCEPTION: %s", e)

@@ -68,20 +68,21 @@ docker compose ps
 ```
 
 You should see:
+
 - **Infrastructure** (timescaledb, kafka, redis, minio) — "healthy" or "running"
 - **Init containers** (kafka-init, dynamodb-init, minio-init) — "exited (0)" (this is normal)
 - **App containers** (app-pipeline, app-consumer-hot, etc.) — "running"
 
 ### 4. Access the App
 
-| Service | URL | Purpose |
-|---------|-----|---------|
-| **Frontend** | http://localhost:3000 | Web dashboard |
-| **Pipeline API** | http://localhost:8080/docs | Upload log files |
-| **Query API** | http://localhost:8081/docs | Natural language queries |
-| **pgAdmin** | http://localhost:5050 | Visual database browser |
-| **MinIO Console** | http://localhost:9001 | Browse uploaded files |
-| **Kafka UI** | http://localhost:8090 | Message flow visualization |
+| Service           | URL                        | Purpose                    |
+| ----------------- | -------------------------- | -------------------------- |
+| **Frontend**      | http://localhost:3000      | Web dashboard              |
+| **Pipeline API**  | http://localhost:8080/docs | Upload log files           |
+| **Query API**     | http://localhost:8081/docs | Natural language queries   |
+| **pgAdmin**       | http://localhost:5050      | Visual database browser    |
+| **MinIO Console** | http://localhost:9001      | Browse uploaded files      |
+| **Kafka UI**      | http://localhost:8090      | Message flow visualization |
 
 ### 5. Run a Demo
 
@@ -97,18 +98,18 @@ python simulate_stream.py
 
 ## Quick Port Reference
 
-| Port | Component |
-|------|-----------|
-| 3000 | Frontend (React/Vite) |
+| Port | Component                  |
+| ---- | -------------------------- |
+| 3000 | Frontend (React/Vite)      |
 | 5050 | pgAdmin (Database Browser) |
-| 5432 | TimescaleDB |
-| 6379 | Redis |
-| 8000 | DynamoDB |
-| 8080 | Pipeline API |
-| 8081 | Query API |
-| 8083 | WebSocket Alerts |
-| 8090 | Kafka UI |
-| 9001 | MinIO Console |
+| 5432 | TimescaleDB                |
+| 6379 | Redis                      |
+| 8000 | DynamoDB                   |
+| 8080 | Pipeline API               |
+| 8081 | Query API                  |
+| 8083 | WebSocket Alerts           |
+| 8090 | Kafka UI                   |
+| 9001 | MinIO Console              |
 
 ---
 
@@ -143,6 +144,7 @@ S3-compatible object storage for raw and processed log files.
 **Access:** http://localhost:5050 (Email: `admin@example.com`, Password: `admin`)
 
 **First Time Setup:**
+
 1. Click "Add New Server"
 2. General tab — Name: `logparser-db`
 3. Connection tab — Hostname: `timescaledb`, Port: `5432`, Database: `logparser_db`, Username: `logparser`, Password: `logparser_secret`
@@ -180,6 +182,7 @@ docker compose down -v
 
 **"App containers can't connect to database/kafka"**
 Use Docker service names inside containers, not `localhost`:
+
 - Database: `timescaledb:5432` | Kafka: `kafka:29092` | Redis: `redis:6379` | MinIO: `minio:9000`
 
 **"Something is taking forever to start"**
@@ -198,4 +201,4 @@ Edit `docker-compose.yml` and change the host port (first number): `"5433:5432"`
 
 ## Author
 
-Entirely created by **Jovan Wang**.
+Application entirely created by **Jovan Wang**.

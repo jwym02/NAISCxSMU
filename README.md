@@ -2,6 +2,10 @@
 
 ### Winner — Micron AI Challenge, National AI Student Challenge 2026
 
+## Author
+
+Application entirely created by **Jovan Wang**.
+
 An AI-powered log processing system for semiconductor manufacturing. It ingests equipment log files, classifies events using domain-grounded LLMs with few-shot RAG, detects statistical anomalies via Isolation Forest, routes by severity in real time, and learns from human feedback to improve over time.
 
 ---
@@ -198,7 +202,3 @@ Edit `docker-compose.yml` and change the host port (first number): `"5433:5432"`
 `docker compose down -v && docker compose up -d`
 
 ---
-
-## Author
-
-Application entirely created by **Jovan Wang**.
